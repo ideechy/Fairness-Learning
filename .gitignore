@@ -1,0 +1,10 @@
+__pycache__
+.idea
+*.R
+.R*
+*.npy
+result/*
+figure/*
+config/*
+*.ipynb
+.ipynb*
