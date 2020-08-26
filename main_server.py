@@ -20,11 +20,11 @@ def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None):
     return result
 
 
-def parallel_fairness(dat_gen, adv, n_train, n_test, paras, m, num_procs=4, preprocess='m', metrics=None):
+def parallel_fairness(dat_gen, n_train, n_test, paras, m, num_procs=4, preprocess='m', metrics=None):
     if metrics is None:
         metrics = ['eo', 'aa', 'acc']
     pool = Pool(num_procs)
-    _fairness_ = partial(fairness, dat_gen, adv, n_train, n_test, paras, preprocess, metrics)
+    _fairness_ = partial(fairness, dat_gen, n_train, n_test, paras, preprocess, metrics)
     experiments = [pool.apply_async(_fairness_) for _ in range(m)]
     res = np.asarray([e.get() for e in experiments])
     return np.asarray((res.mean(axis=0), res.std(axis=0), *np.percentile(res, [2.5, 97.5], axis=0)))
@@ -36,7 +36,7 @@ def cit(dat_gen, n, paras, preprocess='m', b=99):
     for i, para in enumerate(paras):
         s, a, y = dat_gen(n, *para)
         dat = FairData(s, a, y, preprocess_method=preprocess, mode='test')
-        p_vals[i] = dat.cit(b=b)
+        p_vals[i] = dat.cit(b=b, type='cdc')
     return p_vals
 
 
@@ -49,7 +49,16 @@ def parallel_cit(dat_gen, n, paras, m=1000, num_procs=4, preprocess='m', b=99):
 
 
 if __name__ == '__main__':
-    config_path = 'config/admission_n100_test_AllChange.json'
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-c', '--config', 
+        dest='config_path', 
+        type=str,
+        default=None,
+        help='path to the config file'
+    )
+    args = parser.parse_args()
+    config_path = args.config_path or 'config/admission_n100_test_AllChange.json'
 
     with open(config_path) as f:
         config = json.load(f)
@@ -79,7 +88,7 @@ if __name__ == '__main__':
     elif mode == 'eval':
         N_train = int(N * .8)
         N_test = N - N_train
-        eval_results = parallel_fairness(data_generator_fun, adv_group, N_train, N_test, parameters,
+        eval_results = parallel_fairness(data_generator_fun, N_train, N_test, parameters,
                                          M, P, preprocess_method, eval_metrics)
         for i, metric in enumerate(eval_metrics):
             eval_result = [np.hstack((parameters, res)) for res in eval_results[:, :, i, :]]

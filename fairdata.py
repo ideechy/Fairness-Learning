@@ -66,10 +66,36 @@ class FairData(object):
             # fairness-through-unawareness model of y with processed a
             self.ftup = sm.Logit(y_train, sm.add_constant(self.a_prime)).fit(disp=False)
 
-    def cit(self, b=99, numba=True):
+    def cit(self, type=None, **kwargs):
+        if type is None:
+            if self.n < 100:
+                type = 'cdc'
+            else:
+                type = 'parametric'
+        if type == 'cdc':
+            return self.cit_cdc(**kwargs)
+        elif type == 'parametric':
+            return self.cit_parametric(**kwargs)
+        else:
+            raise ValueError('Conditional Independent Test type {:s} not implemented'.format(type))
+
+    def cit_cdc(self, b=99, numba=True):
         test = CDCTest(self.s_train[:, 1:], self.y_train, self.a_prime, num_bootstrap=b, numba=numba)
         test.conduct_conditional_independence_test()
         return test.p_value
+
+    def cit_parametric(self, summary=False):
+        try:
+            parametric_model = self.mlp
+        except AttributeError:
+            dat_prime = np.column_stack((self.s_train, self.a_prime))
+            parametric_model = sm.Logit(self.y_train, dat_prime).fit(disp=False)
+        A = np.zeros((self.c - 1, self.c + self.d))
+        for i in range(self.c - 1):
+            A[i, i+1] = 1
+        test = parametric_model.f_test(A)
+        if summary: print(test)
+        return test.pvalue.item()
 
     def assert_(self, a, s=None, s_is_onehot=True):
         """Assert inputs are of the right shape.

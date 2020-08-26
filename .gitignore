@@ -1,10 +1,12 @@
 __pycache__
 .idea
+.vscode
 *.R
 .R*
 *.npy
-result/*
-figure/*
 config/*
-*.ipynb
+data/*
+figure/*
+result/*
+notebook/*
 .ipynb*

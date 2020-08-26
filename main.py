@@ -38,7 +38,7 @@ def cit(dat_gen, n, paras, preprocess='m', b=99):
     for i, para in enumerate(paras):
         s, a, y = dat_gen(n, *para)
         dat = FairData(s, a, y, preprocess_method=preprocess, mode='test')
-        p_vals[i] = dat.cit(b=b)
+        p_vals[i] = dat.cit(b=b, type='cdc')
     return p_vals
 
 
