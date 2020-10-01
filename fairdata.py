@@ -6,7 +6,7 @@ from cdctest import CDCTest
 
 
 class FairData(object):
-    def __init__(self, s_train, a_train, y_train, preprocess_method='o', mode='predict'):
+    def __init__(self, s_train, a_train, y_train, preprocess_method='o', mode='predict', a_iscategory=None):
         """Initialization of data.
 
         Args:
@@ -32,6 +32,7 @@ class FairData(object):
         self.s_train = self.s_encoder.transform(s_train).toarray()
         # non-sensitive attributes
         self.a_train = a_train
+        self.a_iscategory = self.infer_atype() if a_iscategory is None else a_iscategory
         # training target
         self.y_train = y_train
 
@@ -65,6 +66,22 @@ class FairData(object):
             self.mlp = sm.Logit(y_train, dat_prime).fit(disp=False)
             # fairness-through-unawareness model of y with processed a
             self.ftup = sm.Logit(y_train, sm.add_constant(self.a_prime)).fit(disp=False)
+
+    def infer_atype(self, c=1, m=10):
+        """Infer if attributes are categorical.
+
+        A non-sensitive attribute is considered as a categorical attribute if
+            #distinct_value < max( sqrt( #sample ) * c, m )
+
+        Args:
+            c (float)
+            m (float)
+
+        Returns:
+            A list of boolean
+
+        """
+        return [len(set(self.a_train[:, j])) < max(np.sqrt(self.n) * c, m) for j in range(self.d)]
 
     def cit(self, type=None, **kwargs):
         if type is None:
@@ -141,6 +158,8 @@ class FairData(object):
             return self.process_orthogonal(s, a)
         elif method == 'm':
             return self.process_margin(s, a)
+        elif method == 'mr' or method == 'r':
+            return self.process_margin_random(s, a)
         else:
             raise ValueError('Preprocess method {:s} not implemented'.format(method))
 
@@ -174,17 +193,51 @@ class FairData(object):
 
         """
         assert s_prime is None or isinstance(s_prime, int)
-        a_prime = np.zeros_like(a)
+        a_prime = np.zeros_like(a, dtype='float')
         # number of samples for each s
         n_s = [self.a_sort[c].shape[0] for c in range(self.c)]
         for i in range(a.shape[0]):
             for j, ecdf in enumerate(self.a_ecdf[s[i, 0]]):
-                p = ecdf(a[i, j]) * (1 - 1e-10)
+                p = ecdf(a[i, j]) 
                 if s_prime is not None:
-                    a_prime[i, j] = self.a_sort[s_prime][int(n_s[s_prime] * p), j]
+                    a_prime[i, j] = self.a_sort[s_prime][int((n_s[s_prime] - 1) * p), j]
                 else:
                     for _s, prob_s in self.s_prop.items():
-                        a_prime[i, j] += self.a_sort[_s][int(n_s[_s] * p), j] * prob_s
+                        a_prime[i, j] += self.a_sort[_s][int((n_s[_s] - 1) * p), j] * prob_s
+        return a_prime
+
+    def process_margin_random(self, s, a, s_prime=None):
+        """Preprocess data using marginal distribution mapping.
+
+        When a contains categorical attributes, the processed value of the 
+        categorical attribute is the counterfactual value of it had the unit 
+        been in a randomly selected sensitive group.
+
+        Args:
+            s (numpy.ndarray): shape (*, 1).
+            a (numpy.ndarray): shape (*, d).
+            s_prime (int): If not None, a(s_prime)|s, a is returned; otherwise,
+                the average of a(s_prime)|s, a over s_prime is returned.
+
+        Returns:
+            A numpy.ndarray of shape (*, d).
+
+        """
+        assert s_prime is None or isinstance(s_prime, int)
+        a_prime = np.zeros_like(a, dtype='float')
+        # number of samples for each s
+        n_s = [self.a_sort[c].shape[0] for c in range(self.c)]
+        for i in range(a.shape[0]):
+            for j, ecdf in enumerate(self.a_ecdf[s[i, 0]]):
+                p = ecdf(a[i, j]) 
+                if s_prime is not None:
+                    a_prime[i, j] = self.a_sort[s_prime][int((n_s[s_prime] - 1) * p), j]
+                elif self.a_iscategory[j]:
+                    _s = np.random.choice(list(self.s_prop.keys()), p=list(self.s_prop.values()))
+                    a_prime[i, j] = self.a_sort[_s][int((n_s[_s] - 1) * p), j]
+                else:
+                    for _s, prob_s in self.s_prop.items():
+                        a_prime[i, j] += self.a_sort[_s][int((n_s[_s] - 1) * p), j] * prob_s
         return a_prime
 
     def f_ml(self, s_new, a_new):
@@ -363,8 +416,8 @@ class FairData(object):
         eo_2 = np.max(np.abs(y_2.reshape(-1, 1) - y_2))
         return np.asarray((eo_ml, 0., 0., eo_aa, eo_1, eo_2))
 
-    def aa_metric(self, s, a):
-        """Affirmative Action metric.
+    def cf_metric(self, s, a):
+        """Counterfactual Fairness metric.
 
         Args:
             s (numpy.ndarray): categorical sensitive test attributes,
@@ -403,13 +456,33 @@ class FairData(object):
 
         """
         y = np.array(y).squeeze()
-        acc_ml = np.mean(((self.f_ml(s, a) > 0.5) == y).astype(np.int))
-        acc_ftu = np.mean(((self.f_ftu(a) > 0.5) == y).astype(np.int))
-        acc_eo = np.mean(((self.f_eo(a) > 0.5) == y).astype(np.int))
-        acc_aa = np.mean(((self.f_aa(s, a) > 0.5) == y).astype(np.int))
-        acc_1 = np.mean(((self.f_1(s, a) > 0.5) == y).astype(np.int))
-        acc_2 = np.mean(((self.f_2(s, a) > 0.5) == y).astype(np.int))
+        acc_ml = np.mean((np.random.binomial(1, p=self.f_ml(s, a)) == y).astype(np.int))
+        acc_ftu = np.mean((np.random.binomial(1, p=self.f_ftu(a)) == y).astype(np.int))
+        acc_eo = np.mean((np.random.binomial(1, p=self.f_eo(a)) == y).astype(np.int))
+        acc_aa = np.mean((np.random.binomial(1, p=self.f_aa(s, a)) == y).astype(np.int))
+        acc_1 = np.mean((np.random.binomial(1, p=self.f_1(s, a)) == y).astype(np.int))
+        acc_2 = np.mean((np.random.binomial(1, p=self.f_2(s, a)) == y).astype(np.int))
         return np.hstack((acc_ml, acc_ftu, acc_eo, acc_aa, acc_1, acc_2))
+
+    def mae(self, s, a, y):
+        """Mean Absolute Error in test data.
+
+        Args:
+            s (numpy.ndarray): categorical sensitive test attributes,
+                must have shape (*, 1).
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (*, d).
+            y (numpy.ndarray): binary decisions with size *.
+
+        """
+        y = np.array(y).squeeze()
+        mae_ml = np.mean(np.abs(self.f_ml(s, a) - y))
+        mae_ftu = np.mean(np.abs(self.f_ftu(a) - y))
+        mae_eo = np.mean(np.abs(self.f_eo(a) - y))
+        mae_aa = np.mean(np.abs(self.f_aa(s, a) - y))
+        mae_1 = np.mean(np.abs(self.f_1(s, a) - y))
+        mae_2 = np.mean(np.abs(self.f_2(s, a) - y))
+        return np.hstack((mae_ml, mae_ftu, mae_eo, mae_aa, mae_1, mae_2))
 
     def evaluate(self, s_test=None, a_test=None, y_test=None, metrics=None):
         """Evaluation with test data.
@@ -427,15 +500,17 @@ class FairData(object):
 
         """
         if metrics is None:
-            metrics = ['eo', 'aa', 'acc']
+            metrics = ['eo', 'cf', 'acc', 'mae']
         rtn = ()
         for metric in metrics:
             if metric == 'eo':
                 rtn += (self.eo_metric(a_test),)
-            elif metric == 'aa':
-                rtn += (self.aa_metric(s_test, a_test),)
+            elif metric == 'cf' or metric == 'aa':
+                rtn += (self.cf_metric(s_test, a_test),)
             elif metric == 'acc':
                 rtn += (self.accuracy(s_test, a_test, y_test),)
+            elif metric == 'mae':
+                rtn += (self.mae(s_test, a_test, y_test),)
             else:
                 raise ValueError('Metric {:s} not implemented'.format(metric))
         return rtn

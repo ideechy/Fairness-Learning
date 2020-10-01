@@ -9,7 +9,7 @@ from functools import partial
 
 def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None):
     if metrics is None:
-        metrics = ['eo', 'aa', 'acc']
+        metrics = ['eo', 'cf', 'acc', 'mae']
     np.random.seed(None)
     result = np.zeros((paras.shape[0], len(metrics), 6))
     n = n_train + n_test
@@ -22,7 +22,7 @@ def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None):
 
 def parallel_fairness(dat_gen, n_train, n_test, paras, m, num_procs=4, preprocess='m', metrics=None):
     if metrics is None:
-        metrics = ['eo', 'aa', 'acc']
+        metrics = ['eo', 'cf', 'acc', 'mae']
     pool = Pool(num_procs)
     _fairness_ = partial(fairness, dat_gen, n_train, n_test, paras, preprocess, metrics)
     experiments = [pool.apply_async(_fairness_) for _ in range(m)]

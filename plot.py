@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import numpy as np
 import matplotlib.pyplot as plt
 import datagen
@@ -11,7 +12,7 @@ COLOR = plt.rcParams['axes.prop_cycle'].by_key()['color']
 def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, config_id,
                        methods=None, para_format=None, xlabel=None, ylabels=None):
     if methods is None:
-        methods = ['$f_{ML}$', 'FTU', '$f_{EO}$', '$f_{AA}$', '$f_{1}$', '$f_{2}$']
+        methods = ['$ML$', 'FTU', '$EO$', '$AA$', '$FLAP-1$', '$FLAP-2$']
     metric_table_name = ['result/{:s}_n{:s}_{:s}_preprocess_{:s}_'.format(
         dat_gen.__name__, str(size), preprocess, config_id), '.npy']
     metric_tables = ()
@@ -40,7 +41,7 @@ def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, c
         x = [para_format.format(*p) for p in para]
     if xlabel is None:
         xlabel = "Difference due to " + ', '.join(para_name)
-    y_dict = {'eo': 'EO-fairness', 'aa': 'AA-fairness', 'acc': 'Test accuracy'}
+    y_dict = {'eo': 'EO-metric', 'cf': 'CF-metric', 'acc': 'Test accuracy', 'mae': 'MAE'}
 
     fig, axes = plt.subplots(1, len(metrics), figsize=(3 * len(metrics), 3))
     for j, ax in enumerate(axes):
@@ -126,7 +127,7 @@ if __name__ == '__main__':
         M, N = args.M, args.N
         preprocess_method = args.preprocess_method
         data_generator_fun = datagen.dat_gen_loan_univariate
-        eval_metrics = ['eo', 'aa', 'acc']
+        eval_metrics = ['eo', 'cf', 'acc', 'mae']
         sample_sizes = [50, 100, 200]
         parameter_loc = [2, 3, 4]
         parameter_col = [4]
@@ -143,7 +144,7 @@ if __name__ == '__main__':
         parameter_format = config['parameter_format']
         x_label = config['x_label']
         y_label = config['y_label']
-        identifier = 'config_' + args.config_path.split('_')[-1][:-5]
+        identifier = 'config_' + re.split('[_\\\\]', args.config_path)[-1][:-5]
         if mode == 'test':
             sample_sizes = config['sample_sizes']
             parameter_loc = config['parameter_loc']

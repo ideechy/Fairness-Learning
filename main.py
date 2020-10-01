@@ -10,7 +10,7 @@ from functools import partial
 
 def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None):
     if metrics is None:
-        metrics = ['eo', 'aa', 'acc']
+        metrics = ['eo', 'cf', 'acc', 'mae']
     np.random.seed(None)
     result = np.zeros((paras.shape[0], len(metrics), 6))
     n = n_train + n_test
@@ -23,7 +23,7 @@ def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None):
 
 def parallel_fairness(dat_gen, n_train, n_test, paras, m, num_procs=4, preprocess='m', metrics=None):
     if metrics is None:
-        metrics = ['eo', 'aa', 'acc']
+        metrics = ['eo', 'cf', 'acc', 'mae']
     pool = Pool(num_procs)
     _fairness_ = partial(fairness, dat_gen, n_train, n_test, paras, preprocess, metrics)
     experiments = [pool.apply_async(_fairness_) for _ in range(m)]
@@ -77,7 +77,7 @@ if __name__ == '__main__':
         preprocess_method = args.preprocess_method
         data_generator_fun = datagen.dat_gen_loan_univariate
         parameters = np.mgrid[-1:0, 2:3, 1:2:1, 0.5:1:0.5, 1:3:0.4].reshape(5, -1).transpose()
-        eval_metrics = ['eo', 'aa', 'acc']
+        eval_metrics = ['eo', 'cf', 'acc', 'mae']
         identifier = 'default_config'
     else:
         with open(args.config_path) as f:
