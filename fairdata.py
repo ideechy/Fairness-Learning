@@ -57,7 +57,7 @@ class FairData(object):
         if mode == 'predict':
             # training features with intercept term, shape=(n, d+c)
             dat_train = np.column_stack((self.s_train, a_train))
-            # machine learning model of y
+            # machine learning model of y, i.e. the propensity model pi(s, a; gamma)
             self.ml = sm.Logit(y_train, dat_train).fit(disp=False)
             # fairness-through-unawareness model of y
             self.ftu = sm.Logit(y_train, sm.add_constant(a_train)).fit(disp=False)

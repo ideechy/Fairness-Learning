@@ -9,4 +9,5 @@ data/*
 figure/*
 result/*
 notebook/*
+literature/*
 .ipynb*

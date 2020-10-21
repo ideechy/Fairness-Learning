@@ -59,7 +59,7 @@ def dat_gen_loan_univariate(n, intcp, beta_a, beta_s, lmbd_a, sigma_a=None,
     Args:
         n: sample size.
         intcp: intercept in the logistic model for Y.
-        beta_a: coefficient of I in the logistic model for Y.
+        beta_a: coefficient of A in the logistic model for Y.
         beta_s: selection biases as an array of numbers, advantageous group
             (white) will have a higher probability of getting a loan if its
             corresponding element in beta_s (beta_s[0]) is larger than the
@@ -92,7 +92,53 @@ def dat_gen_loan_univariate(n, intcp, beta_a, beta_s, lmbd_a, sigma_a=None,
     p = expit(intcp + beta_a * a + beta_s * s)
     y = np.random.binomial(1, p=p)
     return s.reshape(n, 1), a.reshape(n, 1), y.reshape(n, 1)
+    
+def dat_gen_loan_univariate_reward(
+    n, intcp_y, beta_y_a, beta_y_s, 
+    intcp_r, beta_r_a, beta_r_s, 
+    lmbd_a, sigma_a=None, adv_race_proportion=0.7):
+    """Generating loan data.
 
+    In addition to `dat_gen_loan_univariate`, this function also generate the 
+    default flag (R). If Y = 1, then R = -1 if default and R = 1 otherwise. If
+    Y = 0, then R is always 0.
+
+    Args:
+        n: sample size.
+        intcp_y: intercept in the logistic model for Y.
+        beta_y_a: coefficient of A in the logistic model for Y.
+        beta_y_s: coefficient of S in the logistic model for Y
+        intcp_r: intercept in the model for R.
+        beta_r_a: coefficient of A in the model for R.
+        beta_r_s: coefficient of S in the model for R.
+        lmbd_a (float): see `dat_gen_loan_univariate`.
+        sigma_a (float): see `dat_gen_loan_univariate`.
+        adv_race_proportion (float): proportion of the advantageous race group.
+
+    Returns:
+        A tuple of four numpy.ndarrays (s, a, y, r).
+
+        s: sensitive attributes, numpy.ndarray of size (n, 1).
+        a: non-sensitive attributes, numpy.ndarray of size (n, 1).
+        y: decisions, numpy.ndarray of size (n, 1).
+        r_star: potential rewards, numpy.ndarray of size (n, 1).
+        r: rewards, numpy.ndarray of size (n, 1).
+    """
+    # 1: advantageous race, 0: disadvantageous race
+    s = np.random.binomial(1, p=adv_race_proportion, size=n)
+    u = np.random.randn(n)
+    if sigma_a is None:
+        # this sigma makes the means equal
+        # sigma_a = np.sqrt(max(1 - 50 * lmbd_a, 0))
+        sigma_a = 1
+    i = 4 + lmbd_a * s + 0.2 * sigma_a ** s * u
+    a = np.exp(i) / 100
+    p_y = expit(intcp_y + beta_y_a * a + beta_y_s * s)
+    y = np.random.binomial(1, p=p_y)
+    p_r = expit(intcp_r + beta_r_a * a + beta_r_s * s)
+    r_star = (np.random.binomial(1, p=p_r) - 0.5) * 2
+    r = r_star * y
+    return s.reshape(n, 1), a.reshape(n, 1), y.reshape(n, 1), r_star.reshape(n, 1), r.reshape(n, 1)
 
 def dat_gen_loan_univariate_unfairness(intcp, beta_a, beta_s, lmbd_a, sigma_a=1):
     """Calculate the unfairness metric of loan data generator.
@@ -202,3 +248,81 @@ def dat_gen_loan_multivariate(n, beta_e, beta_i, beta_s, race_mean_edu=None,
     # non-sensitive attributes
     a = np.column_stack((e, i))
     return s.reshape(n, 1), a, y.reshape(n, 1)
+
+def dat_gen_loan_multivariate_reward(
+    n, beta_y_e, beta_y_i, beta_y_s, 
+    beta_r_e, beta_r_i, beta_r_s, 
+    race_mean_edu=None, race_med_income=None, race_proportion=None):
+    """Generating loan data.
+
+    The sensitive attribute (S) is race, the non-sensitive attributes are
+    education years (E) and personal income (I), thus the dimension of a is 2.
+
+    E and I depend on race (S) if lmbd_e and lmbd_i are not zeros, and the
+    decision (Y) depends on sex (S) if beta_s is not zero.
+
+    Args:
+        n: sample size.
+        beta_y_e: coefficient of E in the logistic model for Y.
+        beta_y_i: coefficient of I in the logistic model for Y.
+        beta_y_s: selection biases in the logistic model for Y.
+        beta_r_e: coefficient of E in the model for R.
+        beta_r_i: coefficient of I in the model for R.
+        beta_r_s: coefficient of S in the model for R.
+        race_proportion: proportion of white, black, asian people as an array
+            of float numbers.
+        race_mean_edu: mean education time (10 year) by race.
+        race_med_income: median annual income (100,000 dollars) by race.
+
+    Returns:
+        A tuple of three numpy.ndarrays (s, a, y).
+
+        s: sensitive attributes, numpy.ndarray of size (n, 1).
+        a: non-sensitive attributes (E, I), numpy.ndarray of size (n, 2).
+        y: decisions, numpy.ndarray of size (n, 1).
+        r_star: potential rewards, numpy.ndarray of size (n, 1).
+        r: rewards, numpy.ndarray of size (n, 1).
+    """
+    if race_proportion is None:
+        race_proportion = np.array([0.76, 0.16, 0.08])
+    else:
+        race_proportion = np.array(race_proportion)
+    if race_mean_edu is None:
+        race_mean_edu = np.array([1.07, 0.99, 1.26])
+    else:
+        race_mean_edu = np.array(race_mean_edu)
+    if race_med_income is None:
+        race_med_income = np.array([0.58, 0.40, 0.81])
+    else:
+        race_med_income = np.array(race_med_income)
+    assert race_proportion.ndim == 1 and \
+        race_proportion.shape == race_mean_edu.shape == race_med_income.shape
+
+    beta_y_s = np.asarray(beta_y_s)
+    assert beta_y_s.ndim == 1 and beta_y_s.shape == race_proportion.shape
+    beta_r_s = np.asarray(beta_y_s)
+    assert beta_r_s.ndim == 1 and beta_r_s.shape == race_proportion.shape
+
+    # onehot encoded s
+    s_onehot = np.random.multinomial(1, pvals=race_proportion, size=n)
+    # s as labels
+    s = np.argmax(s_onehot, axis=1)
+    # education years e = e_mean + e_eps
+    e_mean = race_mean_edu.take(s)
+    e_sd = race_mean_edu[0] / 2.5
+    e_eps = np.random.normal(0, e_sd, size=n)
+    e = np.clip(e_mean + e_eps, 0, None)
+    # income log(i) = log(i_med) + e_eps + i_eps
+    i_med = race_med_income.take(s)
+    i_mu = np.log(i_med) + e_eps
+    i = np.random.lognormal(i_mu, 0.1)
+    # conditional expectation of y
+    p_y = expit(beta_y_e * e + beta_y_i * i + beta_y_s.take(s))
+    y = np.random.binomial(1, p=p_y)
+    # reward
+    p_r = expit(beta_r_e * e + beta_r_i * i + beta_r_s.take(s))
+    r_star = (np.random.binomial(1, p=p_r) - 0.5) * 2
+    r = r_star * y
+    # non-sensitive attributes
+    a = np.column_stack((e, i))
+    return s.reshape(n, 1), a, y.reshape(n, 1), r_star.reshape(n, 1), r.reshape(n, 1)
