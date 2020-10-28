@@ -91,6 +91,8 @@ class FairOptimization(FairData):
         r_hat = (self.rml.predict(dat_train).squeeze() - 0.5) * 2
         return np.mean((c * self.r_train + (c - pi_c) * y_hat * r_hat) / pi_c)
 
+
+
     def optimize(self, estimation_fun, method=None, eta0=None, bounds=None, **kwargs):
         """Find the optimal parameter which maximizes the estimated expect reward
 
@@ -171,7 +173,7 @@ class FairOptimization(FairData):
                 must have shape (*, 1).
             a (numpy.ndarray): non-sensitive test attributes, must
                 have shape (*, d).
-            y (numpy.ndarray): binary decisions with size *.
+            y (numpy.ndarray): observed binary decisions with size *.
             eta (numpy.ndarray): index parameter of the decision class.
 
         """
@@ -206,3 +208,77 @@ class FairOptimization(FairData):
         r_2 = np.mean(self.f_2(s, a) * r_star) 
         r_eta = np.mean(self.f_expit(eta, s, a) * r_star) 
         return np.hstack((r_ml, r_ftu, r_aa, r_1, r_2, r_eta))
+
+    def reward_estimate(self, s, a, y, p, r, repeat=1):
+        """AIPWE of reward on test data.
+
+        Args:
+            s (numpy.ndarray): categorical sensitive test attributes,
+                must have shape (*, 1).
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (*, d).
+            y (numpy.ndarray): observed binary decisions with size *.
+            p (numpy.ndarray): probabilities of choosing Y hat = 1, size *.
+            r (numpy.ndarray): observed rewards with size *.
+            repeat (int): number of replications to simulate Y hat.
+        
+        """
+        a, s = self.assert_(a, s)
+        dat_test = np.column_stack((s, a))
+        pi = self.ml.predict(dat_test).squeeze()
+        pi_c = pi * p + (1 - pi) * (1 - p)
+        r_hat = (self.rml.predict(dat_test).squeeze() - 0.5) * 2
+        aipwe = 0
+        for _ in range(repeat):
+            y_hat = np.random.binomial(1, p)
+            c = (y_hat == y).astype(np.int)
+            aipwe += np.mean((c * r + (c - pi_c) * y_hat * r_hat) / pi_c)
+        return aipwe / repeat
+
+    def reward(self, s, a, y, r, eta, repeat=50):
+        """Estimated average reward without the knowledge of R*.
+
+        The potential reward is partially observed as R = R^*Y. If the chosen 
+        decision Y hat = 1 while Y = 0, the reward is not observed. The average 
+        reward under the eta decision rule is estimated using the AIPWE.
+
+        Args:
+            s (numpy.ndarray): categorical sensitive test attributes,
+                must have shape (*, 1).
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (*, d).
+            y (numpy.ndarray): observed binary decisions with size *.
+            r (numpy.ndarray): observed rewards with size *.
+            eta (numpy.ndarray): index parameter of the decision class.
+            repeat (int): number of replications to calculate the AIPWE.
+        
+        """
+        y = np.array(y).squeeze()
+        r = np.array(r).squeeze()
+        r_ml = self.reward_estimate(s, a, y, self.f_ml(s, a), r, repeat)
+        r_ftu = self.reward_estimate(s, a, y, self.f_ftu(a), r, repeat)
+        r_aa = self.reward_estimate(s, a, y, self.f_aa(s, a), r, repeat)
+        r_1 = self.reward_estimate(s, a, y, self.f_1(s, a), r, repeat)
+        r_2 = self.reward_estimate(s, a, y, self.f_2(s, a), r, repeat)
+        r_eta = self.reward_estimate(s, a, y, self.f_expit(eta, s, a), r, repeat)
+        return np.hstack((r_ml, r_ftu, r_aa, r_1, r_2, r_eta))
+
+    def evaluate(self, eta, s_test, a_test, y_test=None, r_test=None, r_star_test=None, metrics=None):
+        if metrics is None:
+            metrics = ['cf', 'mae', 'er']
+        rtn = ()
+        for metric in metrics:
+            if metric == 'cf':
+                rtn += (self.cf_metric(s_test, a_test, eta),)
+            elif metric == 'mae':
+                assert y_test is not None
+                rtn += (self.mae(s_test, a_test, y_test, eta),)
+            elif metric == 'er':
+                assert y_test is not None and r_test is not None
+                rtn += (self.reward(s_test, a_test, y_test, r_test, eta),)
+            elif metric[:3] == 'ers':
+                assert r_star_test is not None
+                rtn += (self.reward_simulation(s_test, a_test, r_star_test, eta),)
+            else:
+                raise ValueError('Metric {:s} not implemented'.format(metric))
+        return rtn

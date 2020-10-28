@@ -119,7 +119,9 @@ class FairData(object):
 
         If the inputs are acceptable, a will be transformed into np.ndarray of
         shape (*, d) and s will be transformed into one-hot np.ndarray of
-        shape (*, c).
+        shape (*, c) if `s_is_onehot=True`, or categorical np.ndarray of shape
+        (*, 1) if `s_is_onehot=False`.
+        
         """
         a = np.array(a, ndmin=2)
         assert a.ndim == 2 and a.shape[1] == self.d

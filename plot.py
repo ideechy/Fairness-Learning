@@ -106,6 +106,30 @@ def power_comparison(dat_gen, preprocess, sizes, para_loc, config_id,
     plt.tight_layout()
     plt.savefig(figure_name)
 
+def reward_3d(fairopt, estimation_method, eta, bounds):
+    x = np.linspace(*bounds[0], 10)
+    y = np.linspace(*bounds[1], 10)
+    xg, yg = np.meshgrid(x, y)
+    est = np.empty_like(xg)
+    fun = getattr(fairopt, estimation_method)
+    idx1 = eta.index(None)
+    idx2 = eta.index(None, idx1 + 1)
+    params = eta.copy()
+    for i in range(len(x)):
+        params[idx1] = x[i]
+        for j in range(len(y)):
+            params[idx2] = y[j]
+            est[i, j] = fun(params)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.view_init(45, -45)
+    ax.plot_surface(xg, yg, est, cmap='terrain')
+    ax.set_xlabel('eta' + str(idx1))
+    ax.set_ylabel('eta' + str(idx2))
+    ax.set_zlabel(estimation_method)
+    plt.show()
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
