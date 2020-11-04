@@ -41,10 +41,11 @@ def dat_gen_admission_unfairness(intcp, beta_a, beta_s, lmbd):
     """Calculate the unfairness metric of admission data generator.
 
     """
-    return integrate.quad(lambda x:
-                          (expit(intcp + beta_a * np.clip(lmbd + x, 0, 1) + beta_s) -
-                           expit(intcp + beta_a * np.clip(x, 0, 1))) * norm.pdf(x),
-                          -np.inf, np.inf)[0]
+    return integrate.quad(
+        lambda x:
+        (expit(intcp + beta_a * np.clip(lmbd + x, 0, 1) + beta_s) -
+        expit(intcp + beta_a * np.clip(x, 0, 1))) * norm.pdf(x),
+        -np.inf, np.inf)[0]
 
 
 def dat_gen_loan_univariate(n, intcp, beta_a, beta_s, lmbd_a, sigma_a=None,
@@ -111,9 +112,9 @@ def dat_gen_reward_univariate_interactive(s, a, y, intcp, beta_a, beta_s, beta_a
     return r_star.reshape(n, 1), r.reshape(n, 1)
 
 
-def dat_gen_reward_univariate_quadratic(s, a, y, intcp, beta_a, beta_s, beta_as, beta_q):
+def dat_gen_reward_univariate_quadratic(s, a, y, intcp, beta_a2, beta_a, beta_s, beta_as):
     n = len(y)
-    p = expit(intcp + beta_q * (beta_a * a + beta_s * s + beta_as * a * s) ** 2)
+    p = expit(intcp + beta_a2 * a*a + beta_a * a + beta_s * s + beta_as * a*s)
     r_star = (np.random.binomial(1, p=p) - 0.5) * 2
     r = r_star * y
     return r_star.reshape(n, 1), r.reshape(n, 1)
@@ -132,16 +133,18 @@ def dat_gen_loan_univariate_unfairness(intcp, beta_a, beta_s, lmbd_a, sigma_a=1)
     """Calculate the unfairness metric of loan data generator.
 
     """
-    return integrate.quad(lambda x:
-                          (expit(intcp + beta_a * np.exp(4 + lmbd_a + 0.2 * sigma_a * x) / 100 + beta_s) -
-                           expit(intcp + beta_a * np.exp(4 + 0.2 * x) / 100)) * norm.pdf(x),
-                          -np.inf, np.inf)[0]
+    return integrate.quad(
+        lambda x:
+        (expit(intcp + beta_a * np.exp(4 + lmbd_a + 0.2 * sigma_a * x) / 100 + beta_s) -
+        expit(intcp + beta_a * np.exp(4 + 0.2 * x) / 100)) * norm.pdf(x),
+        -np.inf, np.inf)[0]
 
 
-def dat_gen_loan_multivariate_wrapper(n, intcp, beta_e, beta_i, beta_s1=0,
-                                      beta_s2=0, lmbd_e1=0, lmbd_e2=0,
-                                      lmbd_i1=0, lmdb_i2=0, lmbd_e0=1.07,
-                                      lmbd_i0=0.58, race_proportion=None):
+def dat_gen_loan_multivariate_wrapper(
+    n, intcp, beta_e, beta_i, beta_s1=0,
+    beta_s2=0, lmbd_e1=0, lmbd_e2=0,
+    lmbd_i1=0, lmdb_i2=0, lmbd_e0=1.07,
+    lmbd_i0=0.58, race_proportion=None):
     beta_s = [intcp, intcp + beta_s1, intcp + beta_s2]
     race_mean_edu = np.array([lmbd_e0, lmbd_e0 + lmbd_e1, lmbd_e0 + lmbd_e2])
     race_med_income = np.array([lmbd_i0, lmbd_i0 + lmbd_i1, lmbd_i0 + lmdb_i2])
@@ -149,10 +152,11 @@ def dat_gen_loan_multivariate_wrapper(n, intcp, beta_e, beta_i, beta_s1=0,
                                      race_med_income, race_proportion)
 
 
-def dat_gen_loan_multivariate_wrapper_unfairness(intcp, beta_e, beta_i, beta_s1=0,
-                                                 beta_s2=0, lmbd_e1=0, lmbd_e2=0,
-                                                 lmbd_i1=0, lmdb_i2=0, lmbd_e0=1.07,
-                                                 lmbd_i0=0.58):
+def dat_gen_loan_multivariate_wrapper_unfairness(
+    intcp, beta_e, beta_i, beta_s1=0,
+    beta_s2=0, lmbd_e1=0, lmbd_e2=0,
+    lmbd_i1=0, lmdb_i2=0, lmbd_e0=1.07,
+    lmbd_i0=0.58):
     p = np.zeros(3)
     beta_s = [intcp, intcp + beta_s1, intcp + beta_s2]
     race_mean_edu = np.array([lmbd_e0, lmbd_e0 + lmbd_e1, lmbd_e0 + lmbd_e2])
@@ -161,15 +165,17 @@ def dat_gen_loan_multivariate_wrapper_unfairness(intcp, beta_e, beta_i, beta_s1=
     for s in range(3):
         e_mean = race_mean_edu[s]
         i_med = race_med_income[s]
-        p[s] = integrate.dblquad(lambda y, x: expit(beta_e * np.clip(e_mean + e_sd * x, 0, None) +
-                                                    beta_i * i_med * np.exp(e_sd * x + 0.1 * y) +
-                                                    beta_s[s]) * norm.pdf(x) * norm.pdf(y),
-                                 -np.inf, np.inf, -np.inf, np.inf)[0]
+        p[s] = integrate.dblquad(
+            lambda y, x: expit(beta_e * np.clip(e_mean + e_sd * x, 0, None) +
+            beta_i * i_med * np.exp(e_sd * x + 0.1 * y) +
+            beta_s[s]) * norm.pdf(x) * norm.pdf(y),
+            -np.inf, np.inf, -np.inf, np.inf)[0]
     return np.max(p) - np.min(p)
 
 
-def dat_gen_loan_multivariate(n, beta_e, beta_i, beta_s, race_mean_edu=None,
-                              race_med_income=None, race_proportion=None):
+def dat_gen_loan_multivariate(
+    n, beta_e, beta_i, beta_s, 
+    race_mean_edu=None, race_med_income=None, race_proportion=None):
     """Generating loan data.
 
     The sensitive attribute (S) is race, the non-sensitive attributes are
@@ -250,7 +256,8 @@ def dat_gen_reward_multivariate_linear(s, a, y, beta_e, beta_i, beta_s):
     assert r.size == n
     return r_star.reshape(n, 1), r.reshape(n, 1)
 
-def dat_gen_reward_multivariate_quadratic(s, a, y, beta_e, beta_e2, beta_i, beta_i2, beta_ei, beta_s):
+def dat_gen_reward_multivariate_quadratic(
+    s, a, y, beta_e, beta_e2, beta_i, beta_i2, beta_ei, beta_s):
     n = len(y)
     beta_s = np.asarray(beta_s)
     assert beta_s.ndim == 1 and beta_s.shape[0] == len(np.unique(s))

@@ -19,7 +19,9 @@ class FairOptimization(FairData):
             preprocess_method (str): 'o' for orthogonalization, 'm' for
                 marginal distribution mapping.
         """
-        super().__init__(s_train, a_train, y_train, preprocess_method, mode='predict', a_iscategory=a_iscategory)
+        super().__init__(
+            s_train, a_train, y_train, preprocess_method, 
+            mode='predict', a_iscategory=a_iscategory)
         assert r_train.ndim == 2 and r_train.shape == (self.n, 1)
         self.r_train = r_train
         # training features with intercept term, shape=(n, d+c)
@@ -30,7 +32,7 @@ class FairOptimization(FairData):
             dat_train[y_train.squeeze() == 1]
         ).fit(disp=False)
 
-    def f_expit(self, eta, s=None, a=None):
+    def f_expit(self, eta, s_new=None, a_new=None):
         """Prediction with preprocessed input and expit function indexed by eta
 
         Args:
@@ -44,14 +46,31 @@ class FairOptimization(FairData):
             A numpy.ndarray of predicted decisions with shape (*, ).
 
         """
-        if a is None:
+        if a_new is None:
             a_prime = self.a_prime
         else:
-            assert s is not None
-            a_prime = self.process(s, a)
+            assert s_new is not None
+            a_prime = self.process(s_new, a_new)
         eta = np.asarray(eta).reshape(-1, )
         assert eta.shape[0] == self.d + 1
         return expit(np.dot(sm.add_constant(a_prime), eta))
+
+    def f_rml(self, s_new, a_new):
+        """Mahcine learning prediction to optimize return.
+
+        Args:
+            s_new (numpy.ndarray): categorical sensitive training attributes
+                of shape (*, 1) or one-hot encoded attributes of shape (*, c).
+            a_new (numpy.ndarray): non-sensitive training attributes, shape
+                (*, d).
+
+        Returns:
+            A numpy.ndarray of predicted decisions with shape (*, ).
+
+        """
+        a_new, s_new = self.assert_(a_new, s_new)
+        f = self.rml.predict(np.column_stack((s_new, a_new)))
+        return f.squeeze()
 
     def ipwe(self, eta):
         """Inverse probability weighted estimation of the expected reward
@@ -71,7 +90,7 @@ class FairOptimization(FairData):
         return np.mean(c * self.r_train / pi_c)
 
     def aipwe(self, eta):
-        """Augmented inverse probability weighted estimation of the expected reward
+        """Augmented ipwe of the expected reward
 
         Args:
             eta (numpy.ndarray): parameters of shape (d, ).
@@ -147,23 +166,25 @@ class FairOptimization(FairData):
             eta (numpy.ndarray): index parameter of the decision class.
 
         """
-        y_ml, y_ftu, y_aa, y_1, y_2, y_eta = \
-            np.zeros(self.c), np.zeros(self.c), np.zeros(self.c), np.zeros(self.c), np.zeros(self.c), np.zeros(self.c)
+        y_ml, y_rml, y_ftu, y_aa, y_1, y_2, y_eta = \
+            (np.zeros(self.c) for _ in range(7))
         for g in range(self.c):
             a_prime = self.process_margin(s, a, g)
             y_ml[g] = np.mean(self.f_ml(np.broadcast_to(g, s.shape), a_prime))
+            y_rml[g] = np.mean(self.f_rml(np.broadcast_to(g, s.shape), a_prime))
             y_ftu[g] = np.mean(self.f_ftu(a_prime))
             y_aa[g] = np.mean(self.f_aa(np.broadcast_to(g, s.shape), a_prime))
             y_1[g] = np.mean(self.f_1(np.broadcast_to(g, s.shape), a_prime))
             y_2[g] = np.mean(self.f_2(np.broadcast_to(g, s.shape), a_prime))
             y_eta[g] = np.mean(self.f_expit(eta, np.broadcast_to(g, s.shape), a_prime))
         cf_ml = np.max(np.abs(y_ml.reshape(-1, 1) - y_ml))
+        cf_rml = np.max(np.abs(y_rml.reshape(-1, 1) - y_rml))
         cf_ftu = np.max(np.abs(y_ftu.reshape(-1, 1) - y_ftu))
         cf_aa = np.max(np.abs(y_aa.reshape(-1, 1) - y_aa))
         cf_1 = np.max(np.abs(y_1.reshape(-1, 1) - y_1))
         cf_2 = np.max(np.abs(y_2.reshape(-1, 1) - y_2))
         cf_eta = np.max(np.abs(y_eta.reshape(-1, 1) - y_eta))
-        return np.asarray((cf_ml, cf_ftu, cf_aa, cf_1, cf_2, cf_eta))
+        return np.asarray((cf_ml, cf_rml, cf_ftu, cf_aa, cf_1, cf_2, cf_eta))
 
     def mae(self, s, a, y, eta):
         """Mean Absolute Error in test data.
@@ -179,12 +200,13 @@ class FairOptimization(FairData):
         """
         y = np.array(y).squeeze()
         mae_ml = np.mean(np.abs(self.f_ml(s, a) - y))
+        mae_rml = np.mean(np.abs(self.f_rml(s, a) - y))
         mae_ftu = np.mean(np.abs(self.f_ftu(a) - y))
         mae_aa = np.mean(np.abs(self.f_aa(s, a) - y))
         mae_1 = np.mean(np.abs(self.f_1(s, a) - y))
         mae_2 = np.mean(np.abs(self.f_2(s, a) - y))
         mae_eta = np.mean(np.abs(self.f_expit(eta, s, a) - y))
-        return np.hstack((mae_ml, mae_ftu, mae_aa, mae_1, mae_2, mae_eta))
+        return np.hstack((mae_ml, mae_rml, mae_ftu, mae_aa, mae_1, mae_2, mae_eta))
 
     def reward_simulation(self, s, a, r_star, eta):
         """Average reward in the simulated test data.
@@ -202,12 +224,13 @@ class FairOptimization(FairData):
         """
         r_star = np.array(r_star).squeeze()
         r_ml = np.mean(self.f_ml(s, a) * r_star) 
+        r_rml = np.mean(self.f_rml(s, a) * r_star) 
         r_ftu = np.mean(self.f_ftu(a) * r_star) 
         r_aa = np.mean(self.f_aa(s, a) * r_star) 
         r_1 = np.mean(self.f_1(s, a) * r_star) 
         r_2 = np.mean(self.f_2(s, a) * r_star) 
         r_eta = np.mean(self.f_expit(eta, s, a) * r_star) 
-        return np.hstack((r_ml, r_ftu, r_aa, r_1, r_2, r_eta))
+        return np.hstack((r_ml, r_rml, r_ftu, r_aa, r_1, r_2, r_eta))
 
     def reward_estimate(self, s, a, y, p, r, repeat=1):
         """AIPWE of reward on test data.
@@ -256,12 +279,13 @@ class FairOptimization(FairData):
         y = np.array(y).squeeze()
         r = np.array(r).squeeze()
         r_ml = self.reward_estimate(s, a, y, self.f_ml(s, a), r, repeat)
+        r_rml = self.reward_estimate(s, a, y, self.f_rml(s, a), r, repeat)
         r_ftu = self.reward_estimate(s, a, y, self.f_ftu(a), r, repeat)
         r_aa = self.reward_estimate(s, a, y, self.f_aa(s, a), r, repeat)
         r_1 = self.reward_estimate(s, a, y, self.f_1(s, a), r, repeat)
         r_2 = self.reward_estimate(s, a, y, self.f_2(s, a), r, repeat)
         r_eta = self.reward_estimate(s, a, y, self.f_expit(eta, s, a), r, repeat)
-        return np.hstack((r_ml, r_ftu, r_aa, r_1, r_2, r_eta))
+        return np.hstack((r_ml, r_rml, r_ftu, r_aa, r_1, r_2, r_eta))
 
     def evaluate(self, eta, s_test, a_test, y_test=None, r_test=None, r_star_test=None, metrics=None):
         if metrics is None:
