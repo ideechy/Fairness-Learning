@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.preprocessing import OneHotEncoder
 import statsmodels.api as sm
 from statsmodels.distributions.empirical_distribution import ECDF
+
 from cdctest import CDCTest
 
 
@@ -396,29 +397,51 @@ class FairData(object):
         f = self.f_ftup(a_new_prime)
         return f.squeeze()
 
-    def eo_metric(self, a):
-        """Evaluation with test data.
+    def f_wrapper(self, method, a_new, s_new=None, **kwargs):
+        method = method.upper()
+        if method == 'ML':
+            assert s_new is not None
+            return self.f_ml(s_new, a_new)
+        elif method == 'FTU':
+            return self.f_ftu(a_new)
+        elif method == 'EO':
+            return self.f_eo(a_new)
+        elif method == 'AA':
+            assert s_new is not None
+            return self.f_aa(s_new, a_new)
+        elif method == 'FLAP-1':
+            assert s_new is not None
+            preprocess_method = kwargs.get('preprocess_method', None)
+            return self.f_1(s_new, a_new, preprocess_method=preprocess_method)
+        elif method == 'FLAP-2':
+            assert s_new is not None
+            preprocess_method = kwargs.get('preprocess_method', None)
+            return self.f_2(s_new, a_new, preprocess_method=preprocess_method)
+        else:
+            raise ValueError('Method {:s} not implemented'.format(method))
+
+    def eo_metric(self, a, methods, **kwargs):
+        """Equal Oppurtunity metric.
 
         Args:
             a (numpy.ndarray): non-sensitive test attributes, must
                 have shape (*, d).
+            methods: names of decision making methods to evaluate.
 
         """
-        n = a.shape[0]
-        y_ml, y_aa, y_1, y_2 = \
-            np.zeros(self.c), np.zeros(self.c), np.zeros(self.c), np.zeros(self.c)
-        for g in range(self.c):
-            y_ml[g] = np.mean(self.f_ml(np.broadcast_to(g, (n, 1)), a))
-            y_aa[g] = np.mean(self.f_aa(np.broadcast_to(g, (n, 1)), a))
-            y_1[g] = np.mean(self.f_1(np.broadcast_to(g, (n, 1)), a))
-            y_2[g] = np.mean(self.f_2(np.broadcast_to(g, (n, 1)), a))
-        eo_ml = np.max(np.abs(y_ml.reshape(-1, 1) - y_ml))
-        eo_aa = np.max(np.abs(y_aa.reshape(-1, 1) - y_aa))
-        eo_1 = np.max(np.abs(y_1.reshape(-1, 1) - y_1))
-        eo_2 = np.max(np.abs(y_2.reshape(-1, 1) - y_2))
-        return np.asarray((eo_ml, 0., 0., eo_aa, eo_1, eo_2))
+        metrics = np.zeros(len(methods))
+        for i, method in enumerate(methods):
+            if method in ['FTU', 'EO']:
+                continue
+            y = np.zeors(self.c)
+            for g in range(self.c):
+                y[g] = np.mean(self.f_wrapper(
+                    method, a, np.broadcast_to(g, (a.shape[0], 1)), **kwargs
+                ))
+            metrics[i] = np.max(np.abs(y.reshape(-1, 1) - y))
+        return metrics
 
-    def cf_metric(self, s, a):
+    def cf_metric(self, s, a, methods, **kwargs):
         """Counterfactual Fairness metric.
 
         Args:
@@ -426,28 +449,24 @@ class FairData(object):
                 must have shape (*, 1).
             a (numpy.ndarray): non-sensitive test attributes, must
                 have shape (*, d).
+            methods: names of decision making methods to evaluate.
 
         """
-        y_ml, y_ftu, y_eo, y_aa, y_1, y_2 = \
-            np.zeros(self.c), np.zeros(self.c), np.zeros(self.c), np.zeros(self.c), np.zeros(self.c), np.zeros(self.c)
+        metrics = np.empty(len(methods))
+        a_prime = dict()
         for g in range(self.c):
-            a_prime = self.process_margin(s, a, g)
-            y_ml[g] = np.mean(self.f_ml(np.broadcast_to(g, s.shape), a_prime))
-            y_ftu[g] = np.mean(self.f_ftu(a_prime))
-            y_eo[g] = np.mean(self.f_eo(a_prime))
-            y_aa[g] = np.mean(self.f_aa(np.broadcast_to(g, s.shape), a_prime))
-            y_1[g] = np.mean(self.f_1(np.broadcast_to(g, s.shape), a_prime))
-            y_2[g] = np.mean(self.f_2(np.broadcast_to(g, s.shape), a_prime))
-        aa_ml = np.max(np.abs(y_ml.reshape(-1, 1) - y_ml))
-        aa_ftu = np.max(np.abs(y_ftu.reshape(-1, 1) - y_ftu))
-        aa_eo = np.max(np.abs(y_eo.reshape(-1, 1) - y_eo))
-        aa_aa = np.max(np.abs(y_aa.reshape(-1, 1) - y_aa))
-        aa_1 = np.max(np.abs(y_1.reshape(-1, 1) - y_1))
-        aa_2 = np.max(np.abs(y_2.reshape(-1, 1) - y_2))
-        return np.asarray((aa_ml, aa_ftu, aa_eo, aa_aa, aa_1, aa_2))
+            a_prime[g] = self.process_margin(s, a, g)
+        for i, method in enumerate(methods):
+            y = np.zeros(self.c)
+            for g in range(self.c):
+                y[g] = np.mean(self.f_wrapper(
+                    method, a_prime[g], np.broadcast_to(g, s.shape), **kwargs
+                ))
+            metrics[i] = np.max(np.abs(y.reshape(-1, 1) - y))
+        return metrics
 
-    def accuracy(self, s, a, y):
-        """Accuracy in test data.
+    def accuracy(self, s, a, y, methods, **kwargs):
+        """Accuracy in test data (deprecated due to randomness).
 
         Args:
             s (numpy.ndarray): categorical sensitive test attributes,
@@ -455,18 +474,18 @@ class FairData(object):
             a (numpy.ndarray): non-sensitive test attributes, must
                 have shape (*, d).
             y (numpy.ndarray): binary decisions with size *.
+            methods: names of decision making methods to evaluate.
 
         """
         y = np.array(y).squeeze()
-        acc_ml = np.mean((np.random.binomial(1, p=self.f_ml(s, a)) == y).astype(np.int))
-        acc_ftu = np.mean((np.random.binomial(1, p=self.f_ftu(a)) == y).astype(np.int))
-        acc_eo = np.mean((np.random.binomial(1, p=self.f_eo(a)) == y).astype(np.int))
-        acc_aa = np.mean((np.random.binomial(1, p=self.f_aa(s, a)) == y).astype(np.int))
-        acc_1 = np.mean((np.random.binomial(1, p=self.f_1(s, a)) == y).astype(np.int))
-        acc_2 = np.mean((np.random.binomial(1, p=self.f_2(s, a)) == y).astype(np.int))
-        return np.hstack((acc_ml, acc_ftu, acc_eo, acc_aa, acc_1, acc_2))
+        metrics = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            p = self.f_wrapper(method, a, s, **kwargs)
+            y_hat = np.random.binomial(1, p)
+            metrics[i] = np.mean((y_hat == y).astype(np.int))
+        return metrics
 
-    def mae(self, s, a, y):
+    def mae(self, s, a, y, methods, **kwargs):
         """Mean Absolute Error in test data.
 
         Args:
@@ -475,44 +494,51 @@ class FairData(object):
             a (numpy.ndarray): non-sensitive test attributes, must
                 have shape (*, d).
             y (numpy.ndarray): binary decisions with size *.
+            methods: names of decision making methods to evaluate.
 
         """
         y = np.array(y).squeeze()
-        mae_ml = np.mean(np.abs(self.f_ml(s, a) - y))
-        mae_ftu = np.mean(np.abs(self.f_ftu(a) - y))
-        mae_eo = np.mean(np.abs(self.f_eo(a) - y))
-        mae_aa = np.mean(np.abs(self.f_aa(s, a) - y))
-        mae_1 = np.mean(np.abs(self.f_1(s, a) - y))
-        mae_2 = np.mean(np.abs(self.f_2(s, a) - y))
-        return np.hstack((mae_ml, mae_ftu, mae_eo, mae_aa, mae_1, mae_2))
+        metrics = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            p = self.f_wrapper(method, a, s, **kwargs)
+            metrics[i] = np.mean(np.abs(p - y))
+        return metrics
 
-    def evaluate(self, s_test=None, a_test=None, y_test=None, metrics=None):
+    def evaluate(
+        self, a_test, s_test=None, y_test=None, 
+        metrics=None, methods=None, **kwargs):
         """Evaluation with test data.
 
         Args:
-            s_test (numpy.ndarray): categorical sensitive test attributes,
-                must have shape (*, 1).
             a_test (numpy.ndarray): non-sensitive test attributes, must
                 have shape (*, d).
+            s_test (numpy.ndarray): categorical sensitive test attributes,
+                must have shape (*, 1).
             y_test (numpy.ndarray): binary decisions, must have shape (*, 1).
-            metrics (list): list of strings
+            metrics: list of evaluation metrics.
+            methods: list of decision making methods to evaluate.
 
         Returns:
             rtn (tuple): metric values in the order of metrics.
 
         """
         if metrics is None:
-            metrics = ['eo', 'cf', 'acc', 'mae']
+            metrics = ['eo', 'cf', 'mae']
+        if methods is None:
+            methods = ['ML', 'FTU', 'EO', 'AA', 'FLAP-1', 'FLAP-2']
         rtn = ()
         for metric in metrics:
             if metric == 'eo':
-                rtn += (self.eo_metric(a_test),)
+                rtn += (self.eo_metric(a_test, methods, **kwargs),)
             elif metric == 'cf' or metric == 'aa':
-                rtn += (self.cf_metric(s_test, a_test),)
+                assert s_test is not None
+                rtn += (self.cf_metric(s_test, a_test, methods, **kwargs),)
             elif metric == 'acc':
-                rtn += (self.accuracy(s_test, a_test, y_test),)
+                assert s_test is not None and y_test is not None
+                rtn += (self.accuracy(s_test, a_test, y_test, methods, **kwargs),)
             elif metric == 'mae':
-                rtn += (self.mae(s_test, a_test, y_test),)
+                assert s_test is not None and y_test is not None
+                rtn += (self.mae(s_test, a_test, y_test, methods, **kwargs),)
             else:
                 raise ValueError('Metric {:s} not implemented'.format(metric))
         return rtn

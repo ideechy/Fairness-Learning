@@ -32,11 +32,36 @@ class FairOptimization(FairData):
             dat_train[y_train.squeeze() == 1]
         ).fit(disp=False)
 
+    def f_deterministic(self, eta, s_new=None, a_new=None):
+        """Prediction with preprocessed input and deterministic function 
+        indexed by eta
+
+        Args:
+            eta (numpy.ndarray): parameters of shape (d + 1, ).
+            s_new (numpy.ndarray): categorical sensitive training attributes
+                of shape (*, 1) or one-hot encoded attributes of shape (*, c).
+            a_new (numpy.ndarray): non-sensitive training attributes, shape
+                (*, d).
+
+        Returns:
+            A numpy.ndarray of predicted decisions (0 or 1) with shape (*, ).
+
+        """
+        if a_new is None:
+            a_prime = self.a_prime
+        else:
+            assert s_new is not None
+            a_prime = self.process(s_new, a_new)
+        eta = np.asarray(eta).reshape(-1, )
+        assert eta.shape[0] == self.d + 1
+        return (np.dot(sm.add_constant(a_prime), eta) > 0).astype(np.int)
+
+
     def f_expit(self, eta, s_new=None, a_new=None):
         """Prediction with preprocessed input and expit function indexed by eta
 
         Args:
-            eta (numpy.ndarray): parameters of shape (d, ).
+            eta (numpy.ndarray): parameters of shape (d + 1, ).
             s_new (numpy.ndarray): categorical sensitive training attributes
                 of shape (*, 1) or one-hot encoded attributes of shape (*, c).
             a_new (numpy.ndarray): non-sensitive training attributes, shape
@@ -72,52 +97,74 @@ class FairOptimization(FairData):
         f = self.rml.predict(np.column_stack((s_new, a_new)))
         return f.squeeze()
 
-    def ipwe(self, eta):
+    def f_wrapper(self, method, a_new, s_new=None, **kwargs):
+        method = method.upper()
+        if method == 'FLAP-ETA' or method[:10] == 'FLAP-ETA-D':
+            assert s_new is not None and 'eta' in kwargs
+            return self.f_deterministic(kwargs['eta'], s_new, a_new)
+        elif method[:10] == 'FLAP-ETA-S':
+            assert s_new is not None and 'eta' in kwargs
+            return self.f_expit(kwargs['eta'], s_new, a_new)
+        elif method == 'RML':
+            assert s_new is not None
+            return self.f_rml(s_new, a_new)
+        else:
+            return super().f_wrapper(method, a_new, s_new, **kwargs)
+
+    def ipwe(self, eta, deterministic=True):
         """Inverse probability weighted estimation of the expected reward
 
         Args:
-            eta (numpy.ndarray): parameters of shape (d, ).
+            eta (numpy.ndarray): parameters of shape (d + 1, ).
 
         Returns:
             A float number for the estimated expected reward.
 
         """
-        p = self.f_expit(eta)
-        y_hat = np.random.binomial(1, p)
+        if deterministic:
+            y_hat = self.f_deterministic(eta)
+            p = y_hat
+        else:
+            p = self.f_expit(eta)
+            y_hat = np.random.binomial(1, p)
         c = (y_hat == self.y_train).astype(np.int)
         pi = self.ml.predict().squeeze()
         pi_c = pi * p + (1 - pi) * (1 - p)
         return np.mean(c * self.r_train / pi_c)
 
-    def aipwe(self, eta):
+    def aipwe(self, eta, deterministic=True):
         """Augmented ipwe of the expected reward
 
         Args:
-            eta (numpy.ndarray): parameters of shape (d, ).
+            eta (numpy.ndarray): parameters of shape (d + 1, ).
 
         Returns:
             A float number for the estimated expected reward.
 
         """
-        p = self.f_expit(eta)
-        y_hat = np.random.binomial(1, p)
-        # y_hat = (p > 0.5).astype(np.int)
+        if deterministic:
+            y_hat = self.f_deterministic(eta)
+            p = y_hat
+        else:
+            p = self.f_expit(eta)
+            y_hat = np.random.binomial(1, p)
         c = (y_hat == self.y_train).astype(np.int)
         pi = self.ml.predict().squeeze()
         pi_c = pi * p + (1 - pi) * (1 - p)
-        # pi_c = pi * y_hat + (1 - pi) * (1 - y_hat)
         dat_train = np.column_stack((self.s_train, self.a_train))
         r_hat = (self.rml.predict(dat_train).squeeze() - 0.5) * 2
         return np.mean((c * self.r_train + (c - pi_c) * y_hat * r_hat) / pi_c)
 
-
-
-    def optimize(self, estimation_fun, method=None, eta0=None, bounds=None, **kwargs):
+    def optimize(
+        self, estimation_fun, estimation_args=None, 
+        method=None, eta0=None, bounds=None, **kwargs):
         """Find the optimal parameter which maximizes the estimated expect reward
 
         Args:
             estimation_fun (callable): estimation function of the expected 
                 reward which takes the function parameter eta as the only input.
+            estimation_args (dict): keyword arguments passed to the estimation
+                function.
             method (str): type of solver passed to `scipy.optimize.minimize`.
             eta0 (numpy.ndarray): initial guess of the parameter with shape 
                 (d, ). If not given, set to be the coefficients of the logistic
@@ -142,7 +189,9 @@ class FairOptimization(FairData):
             bounds = [(e / 10, e * 10) if e > 0 else (e * 10, e / 10) for e in eta0]
         else:
             assert len(bounds) == self.d + 1
-        fun = lambda x: -estimation_fun(x)
+        if estimation_args is None:
+            estimation_args = dict()
+        fun = lambda x: -estimation_fun(x, **estimation_args)
         if method == 'shgo':
             eta_opt = optimize.shgo(fun, bounds)
         elif method == 'dual_annealing':
@@ -155,60 +204,7 @@ class FairOptimization(FairData):
             eta_opt = optimize.minimize(fun, eta0, method=method, **kwargs)
         return eta_opt
 
-    def cf_metric(self, s, a, eta):
-        """Counterfactual Fairness metric.
-
-        Args:
-            s (numpy.ndarray): categorical sensitive test attributes,
-                must have shape (*, 1).
-            a (numpy.ndarray): non-sensitive test attributes, must
-                have shape (*, d).
-            eta (numpy.ndarray): index parameter of the decision class.
-
-        """
-        y_ml, y_rml, y_ftu, y_aa, y_1, y_2, y_eta = \
-            (np.zeros(self.c) for _ in range(7))
-        for g in range(self.c):
-            a_prime = self.process_margin(s, a, g)
-            y_ml[g] = np.mean(self.f_ml(np.broadcast_to(g, s.shape), a_prime))
-            y_rml[g] = np.mean(self.f_rml(np.broadcast_to(g, s.shape), a_prime))
-            y_ftu[g] = np.mean(self.f_ftu(a_prime))
-            y_aa[g] = np.mean(self.f_aa(np.broadcast_to(g, s.shape), a_prime))
-            y_1[g] = np.mean(self.f_1(np.broadcast_to(g, s.shape), a_prime))
-            y_2[g] = np.mean(self.f_2(np.broadcast_to(g, s.shape), a_prime))
-            y_eta[g] = np.mean(self.f_expit(eta, np.broadcast_to(g, s.shape), a_prime))
-        cf_ml = np.max(np.abs(y_ml.reshape(-1, 1) - y_ml))
-        cf_rml = np.max(np.abs(y_rml.reshape(-1, 1) - y_rml))
-        cf_ftu = np.max(np.abs(y_ftu.reshape(-1, 1) - y_ftu))
-        cf_aa = np.max(np.abs(y_aa.reshape(-1, 1) - y_aa))
-        cf_1 = np.max(np.abs(y_1.reshape(-1, 1) - y_1))
-        cf_2 = np.max(np.abs(y_2.reshape(-1, 1) - y_2))
-        cf_eta = np.max(np.abs(y_eta.reshape(-1, 1) - y_eta))
-        return np.asarray((cf_ml, cf_rml, cf_ftu, cf_aa, cf_1, cf_2, cf_eta))
-
-    def mae(self, s, a, y, eta):
-        """Mean Absolute Error in test data.
-
-        Args:
-            s (numpy.ndarray): categorical sensitive test attributes,
-                must have shape (*, 1).
-            a (numpy.ndarray): non-sensitive test attributes, must
-                have shape (*, d).
-            y (numpy.ndarray): observed binary decisions with size *.
-            eta (numpy.ndarray): index parameter of the decision class.
-
-        """
-        y = np.array(y).squeeze()
-        mae_ml = np.mean(np.abs(self.f_ml(s, a) - y))
-        mae_rml = np.mean(np.abs(self.f_rml(s, a) - y))
-        mae_ftu = np.mean(np.abs(self.f_ftu(a) - y))
-        mae_aa = np.mean(np.abs(self.f_aa(s, a) - y))
-        mae_1 = np.mean(np.abs(self.f_1(s, a) - y))
-        mae_2 = np.mean(np.abs(self.f_2(s, a) - y))
-        mae_eta = np.mean(np.abs(self.f_expit(eta, s, a) - y))
-        return np.hstack((mae_ml, mae_rml, mae_ftu, mae_aa, mae_1, mae_2, mae_eta))
-
-    def reward_simulation(self, s, a, r_star, eta):
+    def reward_simulation(self, s, a, r_star, methods, **kwargs):
         """Average reward in the simulated test data.
 
         The potential reward should be fully observed in the simulated data.
@@ -219,18 +215,15 @@ class FairOptimization(FairData):
             a (numpy.ndarray): non-sensitive test attributes, must
                 have shape (*, d).
             r_star (numpy.ndarray): potential rewards with size *.
-            eta (numpy.ndarray): index parameter of the decision class.
+            methods: names of decision making methods to evaluate.
         
         """
         r_star = np.array(r_star).squeeze()
-        r_ml = np.mean(self.f_ml(s, a) * r_star) 
-        r_rml = np.mean(self.f_rml(s, a) * r_star) 
-        r_ftu = np.mean(self.f_ftu(a) * r_star) 
-        r_aa = np.mean(self.f_aa(s, a) * r_star) 
-        r_1 = np.mean(self.f_1(s, a) * r_star) 
-        r_2 = np.mean(self.f_2(s, a) * r_star) 
-        r_eta = np.mean(self.f_expit(eta, s, a) * r_star) 
-        return np.hstack((r_ml, r_rml, r_ftu, r_aa, r_1, r_2, r_eta))
+        metrics = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            p = self.f_wrapper(method, a, s, **kwargs)
+            metrics[i] = np.mean(p * r_star)
+        return metrics
 
     def reward_estimate(self, s, a, y, p, r, repeat=1):
         """AIPWE of reward on test data.
@@ -258,7 +251,7 @@ class FairOptimization(FairData):
             aipwe += np.mean((c * r + (c - pi_c) * y_hat * r_hat) / pi_c)
         return aipwe / repeat
 
-    def reward(self, s, a, y, r, eta, repeat=50):
+    def reward(self, s, a, y, r, methods, repeat=50, **kwargs):
         """Estimated average reward without the knowledge of R*.
 
         The potential reward is partially observed as R = R^*Y. If the chosen 
@@ -272,37 +265,43 @@ class FairOptimization(FairData):
                 have shape (*, d).
             y (numpy.ndarray): observed binary decisions with size *.
             r (numpy.ndarray): observed rewards with size *.
-            eta (numpy.ndarray): index parameter of the decision class.
+            methods: names of decision making methods to evaluate.
             repeat (int): number of replications to calculate the AIPWE.
         
         """
         y = np.array(y).squeeze()
         r = np.array(r).squeeze()
-        r_ml = self.reward_estimate(s, a, y, self.f_ml(s, a), r, repeat)
-        r_rml = self.reward_estimate(s, a, y, self.f_rml(s, a), r, repeat)
-        r_ftu = self.reward_estimate(s, a, y, self.f_ftu(a), r, repeat)
-        r_aa = self.reward_estimate(s, a, y, self.f_aa(s, a), r, repeat)
-        r_1 = self.reward_estimate(s, a, y, self.f_1(s, a), r, repeat)
-        r_2 = self.reward_estimate(s, a, y, self.f_2(s, a), r, repeat)
-        r_eta = self.reward_estimate(s, a, y, self.f_expit(eta, s, a), r, repeat)
-        return np.hstack((r_ml, r_rml, r_ftu, r_aa, r_1, r_2, r_eta))
+        metrics = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            p = self.f_wrapper(method, a, s, **kwargs)
+            metrics[i] = self.reward_estimate(s, a, y, p, r, repeat)
+        return metrics
 
-    def evaluate(self, eta, s_test, a_test, y_test=None, r_test=None, r_star_test=None, metrics=None):
+    def evaluate(
+        self, a_test, s_test=None, y_test=None, 
+        metrics=None, methods=None, **kwargs):
         if metrics is None:
             metrics = ['cf', 'mae', 'er']
+        if methods is None:
+            methods = ['ML', 'RML', 'FTU', 'AA', 'FLAP-1', 'FLAP-2', 'FLAP-ETA']
         rtn = ()
         for metric in metrics:
-            if metric == 'cf':
-                rtn += (self.cf_metric(s_test, a_test, eta),)
-            elif metric == 'mae':
-                assert y_test is not None
-                rtn += (self.mae(s_test, a_test, y_test, eta),)
-            elif metric == 'er':
-                assert y_test is not None and r_test is not None
-                rtn += (self.reward(s_test, a_test, y_test, r_test, eta),)
+            if metric == 'er':
+                assert s_test is not None and y_test is not None 
+                assert 'r_test' in kwargs
+                r_test = kwargs.pop('r_test')
+                rtn += (self.reward(
+                    s_test, a_test, y_test, r_test, methods, **kwargs
+                ),)
             elif metric[:3] == 'ers':
-                assert r_star_test is not None
-                rtn += (self.reward_simulation(s_test, a_test, r_star_test, eta),)
+                assert s_test is not None
+                assert 'r_star_test' in kwargs
+                r_star_test = kwargs.pop('r_star_test')
+                rtn += (self.reward_simulation(
+                    s_test, a_test, r_star_test, methods, **kwargs
+                ),)
             else:
-                raise ValueError('Metric {:s} not implemented'.format(metric))
+                rtn += super().evaluate(
+                    a_test, s_test, y_test, [metric], methods, **kwargs
+                )
         return rtn
