@@ -12,7 +12,7 @@ COLOR = plt.rcParams['axes.prop_cycle'].by_key()['color']
 def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, config_id,
                        methods=None, para_format=None, xlabel=None, ylabels=None):
     if methods is None:
-        methods = ['$ML$', 'FTU', '$EO$', '$AA$', '$FLAP-1$', '$FLAP-2$']
+        methods = ['ML', 'FTU', 'FL', 'AA', 'FLAP-1', 'FLAP-2']
     metric_table_name = ['result/{:s}_n{:s}_{:s}_preprocess_{:s}_'.format(
         dat_gen.__name__, str(size), preprocess, config_id), '.npy']
     metric_tables = ()
@@ -41,7 +41,15 @@ def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, c
         x = [para_format.format(*p) for p in para]
     if xlabel is None:
         xlabel = "Difference due to " + ', '.join(para_name)
-    y_dict = {'eo': 'EO-metric', 'cf': 'CF-metric', 'acc': 'Test accuracy', 'mae': 'MAE'}
+    y_dict = {
+        'eo': 'EO-metric',
+        'aa': 'AA-metric',
+        'cf': 'CF-metric', 
+        'acc': 'Test accuracy', 
+        'mae': 'MAE',
+        'roc': 'ROC AUC',
+        'ap': 'Average precision',
+    }
 
     fig, axes = plt.subplots(1, len(metrics), figsize=(3 * len(metrics), 3))
     for j, ax in enumerate(axes):
@@ -153,7 +161,7 @@ if __name__ == '__main__':
         M, N = args.M, args.N
         preprocess_method = args.preprocess_method
         data_generator_fun = datagen.dat_gen_loan_univariate
-        eval_metrics = ['eo', 'cf', 'acc', 'mae']
+        eval_metrics = ['cf', 'mae', 'ap']
         sample_sizes = [50, 100, 200]
         parameter_loc = [2, 3, 4]
         parameter_col = [4]
@@ -175,7 +183,7 @@ if __name__ == '__main__':
             sample_sizes = config['sample_sizes']
             parameter_loc = config['parameter_loc']
         elif mode == 'eval':
-            eval_metrics = config['eval_metrics']
+            eval_metrics = config['plot_metrics']
             parameter_col = config['parameter_col']
             parameter_row = config['parameter_row']
         else:

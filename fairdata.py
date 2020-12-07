@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_score
 from sklearn.preprocessing import OneHotEncoder
 import statsmodels.api as sm
 from statsmodels.distributions.empirical_distribution import ECDF
@@ -20,6 +21,9 @@ class FairData(object):
                 marginal distribution mapping.
 
         """
+        s_train = np.asarray(s_train)
+        a_train = np.asarray(a_train)
+        y_train = np.asarray(y_train)
         # check dimensions
         assert s_train.ndim == a_train.ndim == y_train.ndim == 2
         self.n, self.d = a_train.shape
@@ -67,6 +71,11 @@ class FairData(object):
             self.mlp = sm.Logit(y_train, dat_prime).fit(disp=False)
             # fairness-through-unawareness model of y with processed a
             self.ftup = sm.Logit(y_train, sm.add_constant(self.a_prime)).fit(disp=False)
+            # extract residuals of a regressing on s as features
+            a_s = np.array([self.a_cmean[s_i] for s_i in s_train.squeeze()])
+            a_res = a_train - a_s
+            # machine learning model of y with residuals
+            self.mlr = sm.Logit(y_train, sm.add_constant(a_res)).fit(disp=False)
 
     def infer_atype(self, c=1, m=10):
         """Infer if attributes are categorical.
@@ -139,7 +148,7 @@ class FairData(object):
                 s = self.s_encoder.inverse_transform(s)
             return a, s
 
-    def process(self, s, a, method=None):
+    def process(self, s, a, s_prime=None, method=None):
         """Wrapper for preprocessing data.
 
         Args:
@@ -158,28 +167,34 @@ class FairData(object):
         if not method:
             method = self.preprocess_method
         if method == 'o':
-            return self.process_orthogonal(s, a)
+            return self.process_orthogonal(s, a, s_prime)
         elif method == 'm':
-            return self.process_margin(s, a)
+            return self.process_margin(s, a, s_prime)
         elif method == 'mr' or method == 'r':
-            return self.process_margin_random(s, a)
+            return self.process_margin_random(s, a, s_prime)
         else:
             raise ValueError('Preprocess method {:s} not implemented'.format(method))
 
-    def process_orthogonal(self, s, a):
+    def process_orthogonal(self, s, a, s_prime=None):
         """Preprocess data using orthogonalization.
 
         Args:
             s (numpy.ndarray): shape (*, 1).
             a (numpy.ndarray): shape (*, d).
+            s_prime (int): If not None, a(s_prime)|s, a is returned; otherwise,
+                the average of a(s_prime)|s, a over s_prime is returned.
 
         Returns:
             A numpy.ndarray of shape (*, d).
 
         """
+        assert s_prime is None or isinstance(s_prime, int)
         # conditional mean of a given s, shape=(*, d)
         a_s = np.array([self.a_cmean[s_i[0]] for s_i in s])
-        a_prime = a - a_s + self.a_mean
+        if s_prime is not None:
+            a_prime = a - a_s + self.a_cmean[s_prime]
+        else:
+            a_prime = a - a_s + self.a_mean
         return a_prime
 
     def process_margin(self, s, a, s_prime=None):
@@ -318,6 +333,29 @@ class FairData(object):
         f = self.ftu.predict(sm.add_constant(a_new, has_constant='add'))
         return f.squeeze()
 
+    def f_fl(self, s_new, a_new):
+        """FairLearning prediction (Kusner et al., 2017)
+        Implementation taken from (Wang et al., 2019)
+
+        Args:
+            s_new (numpy.ndarray): categorical sensitive training attributes
+                of shape (*, 1) or one-hot encoded attributes of shape (*, c).
+            a_new (numpy.ndarray): non-sensitive training attributes, shape
+                (*, d).
+
+        Returns:
+            A numpy.ndarray of predicted decisions with shape (*, ).
+
+        """
+        a_new, s_new = self.assert_(a_new, s_new, s_is_onehot=False)
+        f = np.zeros(a_new.shape[0])
+        # conditional mean of a given s, shape=(*, d)
+        a_s = np.array([self.a_cmean[s_i[0]] for s_i in s_new])
+        # shape=(*, d)
+        res = a_new - a_s
+        f = self.mlr.predict(sm.add_constant(res, has_constant='add'))
+        return f.squeeze()
+
     def f_mlp(self, s_new, a_new):
         """Machine learning prediction with preprocessed input
 
@@ -404,6 +442,8 @@ class FairData(object):
             return self.f_ml(s_new, a_new)
         elif method == 'FTU':
             return self.f_ftu(a_new)
+        elif method == 'FL':
+            return self.f_fl(s_new, a_new)
         elif method == 'EO':
             return self.f_eo(a_new)
         elif method == 'AA':
@@ -433,10 +473,34 @@ class FairData(object):
         for i, method in enumerate(methods):
             if method in ['FTU', 'EO']:
                 continue
-            y = np.zeors(self.c)
+            y = np.zeros(self.c)
             for g in range(self.c):
                 y[g] = np.mean(self.f_wrapper(
                     method, a, np.broadcast_to(g, (a.shape[0], 1)), **kwargs
+                ))
+            metrics[i] = np.max(np.abs(y.reshape(-1, 1) - y))
+        return metrics
+
+    def aa_metric(self, s, a, methods, **kwargs):
+        """Affirmative Action metric.
+
+        Args:
+            s (numpy.ndarray): categorical sensitive test attributes,
+                must have shape (*, 1).
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (*, d).
+            methods: names of decision making methods to evaluate.
+
+        """
+        metrics = np.empty(len(methods))
+        a_prime = dict()
+        for g in range(self.c):
+            a_prime[g] = self.process(s, a, g, method='o')
+        for i, method in enumerate(methods):
+            y = np.zeros(self.c)
+            for g in range(self.c):
+                y[g] = np.mean(self.f_wrapper(
+                    method, a_prime[g], np.broadcast_to(g, s.shape), **kwargs
                 ))
             metrics[i] = np.max(np.abs(y.reshape(-1, 1) - y))
         return metrics
@@ -455,7 +519,7 @@ class FairData(object):
         metrics = np.empty(len(methods))
         a_prime = dict()
         for g in range(self.c):
-            a_prime[g] = self.process_margin(s, a, g)
+            a_prime[g] = self.process(s, a, g, method='m')
         for i, method in enumerate(methods):
             y = np.zeros(self.c)
             for g in range(self.c):
@@ -481,8 +545,7 @@ class FairData(object):
         metrics = np.empty(len(methods))
         for i, method in enumerate(methods):
             p = self.f_wrapper(method, a, s, **kwargs)
-            y_hat = np.random.binomial(1, p)
-            metrics[i] = np.mean((y_hat == y).astype(np.int))
+            metrics[i] = accuracy_score(y, p)
         return metrics
 
     def mae(self, s, a, y, methods, **kwargs):
@@ -502,6 +565,44 @@ class FairData(object):
         for i, method in enumerate(methods):
             p = self.f_wrapper(method, a, s, **kwargs)
             metrics[i] = np.mean(np.abs(p - y))
+        return metrics
+
+    def roc_auc(self, s, a, y, methods, **kwargs):
+        """Area under the ROC curve in test data.
+
+        Args:
+            s (numpy.ndarray): categorical sensitive test attributes,
+                must have shape (*, 1).
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (*, d).
+            y (numpy.ndarray): binary decisions with size *.
+            methods: names of decision making methods to evaluate.
+
+        """
+        y = np.array(y).squeeze()
+        metrics = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            p = self.f_wrapper(method, a, s, **kwargs)
+            metrics[i] = roc_auc_score(y, p)
+        return metrics
+
+    def average_precision(self, s, a, y, methods, **kwargs):
+        """Area under the PR curve in test data.
+
+        Args:
+            s (numpy.ndarray): categorical sensitive test attributes,
+                must have shape (*, 1).
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (*, d).
+            y (numpy.ndarray): binary decisions with size *.
+            methods: names of decision making methods to evaluate.
+
+        """
+        y = np.array(y).squeeze()
+        metrics = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            p = self.f_wrapper(method, a, s, **kwargs)
+            metrics[i] = average_precision_score(y, p)
         return metrics
 
     def evaluate(
@@ -525,20 +626,27 @@ class FairData(object):
         if metrics is None:
             metrics = ['eo', 'cf', 'mae']
         if methods is None:
-            methods = ['ML', 'FTU', 'EO', 'AA', 'FLAP-1', 'FLAP-2']
+            methods = ['ML', 'FTU', 'FL', 'AA', 'FLAP-1', 'FLAP-2']
         rtn = ()
+        func_dict = {
+            'eo': 'eo_metric',
+            'aa': 'aa_metric',
+            'cf': 'cf_metric',
+            'acc': 'accuracy', 
+            'mae': 'mae', 
+            'roc': 'roc_auc', 
+            'ap': 'average_precision',
+        }
         for metric in metrics:
+            func = getattr(self, func_dict[metric])
             if metric == 'eo':
-                rtn += (self.eo_metric(a_test, methods, **kwargs),)
+                rtn += (func(a_test, methods, **kwargs),)
             elif metric == 'cf' or metric == 'aa':
                 assert s_test is not None
-                rtn += (self.cf_metric(s_test, a_test, methods, **kwargs),)
-            elif metric == 'acc':
+                rtn += (func(s_test, a_test, methods, **kwargs),)
+            elif metric in ['acc', 'mae', 'roc', 'ap']:
                 assert s_test is not None and y_test is not None
-                rtn += (self.accuracy(s_test, a_test, y_test, methods, **kwargs),)
-            elif metric == 'mae':
-                assert s_test is not None and y_test is not None
-                rtn += (self.mae(s_test, a_test, y_test, methods, **kwargs),)
+                rtn += (func(s_test, a_test, y_test, methods, **kwargs),)
             else:
                 raise ValueError('Metric {:s} not implemented'.format(metric))
         return rtn

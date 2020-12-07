@@ -10,27 +10,36 @@ from multiprocessing import Pool
 from functools import partial
 
 
-def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None):
+def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None, methods=None):
     if metrics is None:
-        metrics = ['eo', 'cf', 'acc', 'mae']
+        metrics = ['cf', 'mae', 'roc', 'ap']
+    if methods is None:
+        methods = ['ML', 'FTU', 'FL', 'AA', 'FLAP-1', 'FLAP-2']
     np.random.seed(None)
     result = np.zeros((paras.shape[0], len(metrics), 6))
     n = n_train + n_test
     for i, para in enumerate(paras):
         s, a, y = dat_gen(n, *para)
-        data = FairData(s[:n_train], a[:n_train], y[:n_train], preprocess_method=preprocess, mode='predict')
-        result[i] = np.asarray(data.evaluate(s[n_train:], a[n_train:], y[n_train:], metrics=metrics))
+        data = FairData(
+            s_train=s[:n_train], a_train=a[:n_train], y_train=y[:n_train], 
+            preprocess_method=preprocess, mode='predict'
+        )
+        result[i] = np.asarray(data.evaluate(
+            a_test=a[n_train:], s_test=s[n_train:], y_test=y[n_train:], 
+            metrics=metrics, methods=methods
+        ))
     return result
 
 
-def parallel_fairness(dat_gen, n_train, n_test, paras, m, num_procs=4, preprocess='m', metrics=None):
+def parallel_fairness(dat_gen, n_train, n_test, paras, m, num_procs=4, preprocess='m', metrics=None, methods=None):
     if metrics is None:
-        metrics = ['eo', 'cf', 'acc', 'mae']
+        metrics = ['cf', 'mae', 'roc', 'ap']
+    if methods is None:
+        methods = ['ML', 'FTU', 'FL', 'AA', 'FLAP-1', 'FLAP-2']
     pool = Pool(num_procs)
-    _fairness_ = partial(fairness, dat_gen, n_train, n_test, paras, preprocess, metrics)
+    _fairness_ = partial(fairness, dat_gen, n_train, n_test, paras, preprocess, metrics, methods)
     experiments = [pool.apply_async(_fairness_) for _ in range(m)]
     res = np.asarray([e.get() for e in experiments])
-    np.save('res'+str(n_test), res)
     return np.asarray((res.mean(axis=0), res.std(axis=0), *np.percentile(res, [2.5, 97.5], axis=0)))
 
 
