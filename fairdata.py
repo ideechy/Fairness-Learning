@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_score
 from sklearn.preprocessing import OneHotEncoder
+from scipy.stats import entropy
 import statsmodels.api as sm
 from statsmodels.distributions.empirical_distribution import ECDF
 
@@ -77,6 +78,9 @@ class FairData(object):
             # machine learning model of y with residuals
             self.mlr = sm.Logit(y_train, sm.add_constant(a_res)).fit(disp=False)
 
+        # runtime variables
+        self.bound = dict()
+
     def infer_atype(self, c=1, m=10):
         """Infer if attributes are categorical.
 
@@ -95,16 +99,12 @@ class FairData(object):
 
     def cit(self, type=None, **kwargs):
         if type is None:
-            if self.n < 100:
-                type = 'cdc'
-            else:
-                type = 'parametric'
+            type = 'cdc' if self.n < 100 else 'parametric'
         if type == 'cdc':
             return self.cit_cdc(**kwargs)
-        elif type == 'parametric':
+        if type == 'parametric':
             return self.cit_parametric(**kwargs)
-        else:
-            raise ValueError('Conditional Independent Test type {:s} not implemented'.format(type))
+        raise ValueError('Conditional Independent Test type {:s} not implemented'.format(type))
 
     def cit_cdc(self, b=99, numba=True):
         test = CDCTest(self.s_train[:, 1:], self.y_train, self.a_prime, num_bootstrap=b, numba=numba)
@@ -137,16 +137,15 @@ class FairData(object):
         assert a.ndim == 2 and a.shape[1] == self.d
         if s is None:
             return a
-        else:
-            s = np.array(s, ndmin=2)
-            assert s.ndim == 2 and s.shape[0] == a.shape[0]
-            assert s.shape[1] == 1 or s.shape[1] == self.c
-            if s_is_onehot and s.shape[1] == 1:
-                # transform s if it's not one-hot encoded
-                s = self.s_encoder.transform(s).toarray()
-            elif not s_is_onehot and s.shape[1] == self.c:
-                s = self.s_encoder.inverse_transform(s)
-            return a, s
+        s = np.array(s, ndmin=2)
+        assert s.ndim == 2 and s.shape[0] == a.shape[0]
+        assert s.shape[1] == 1 or s.shape[1] == self.c
+        if s_is_onehot and s.shape[1] == 1:
+            # transform s if it's not one-hot encoded
+            s = self.s_encoder.transform(s).toarray()
+        elif not s_is_onehot and s.shape[1] == self.c:
+            s = self.s_encoder.inverse_transform(s)
+        return a, s
 
     def process(self, s, a, s_prime=None, method=None):
         """Wrapper for preprocessing data.
@@ -168,12 +167,11 @@ class FairData(object):
             method = self.preprocess_method
         if method == 'o':
             return self.process_orthogonal(s, a, s_prime)
-        elif method == 'm':
+        if method == 'm':
             return self.process_margin(s, a, s_prime)
-        elif method == 'mr' or method == 'r':
+        if method == 'mr' or method == 'r':
             return self.process_margin_random(s, a, s_prime)
-        else:
-            raise ValueError('Preprocess method {:s} not implemented'.format(method))
+        raise ValueError('Preprocess method {:s} not implemented'.format(method))
 
     def process_orthogonal(self, s, a, s_prime=None):
         """Preprocess data using orthogonalization.
@@ -192,10 +190,8 @@ class FairData(object):
         # conditional mean of a given s, shape=(*, d)
         a_s = np.array([self.a_cmean[s_i[0]] for s_i in s])
         if s_prime is not None:
-            a_prime = a - a_s + self.a_cmean[s_prime]
-        else:
-            a_prime = a - a_s + self.a_mean
-        return a_prime
+            return a - a_s + self.a_cmean[s_prime]
+        return a - a_s + self.a_mean
 
     def process_margin(self, s, a, s_prime=None):
         """Preprocess data using marginal distribution mapping.
@@ -440,25 +436,24 @@ class FairData(object):
         if method == 'ML':
             assert s_new is not None
             return self.f_ml(s_new, a_new)
-        elif method == 'FTU':
+        if method == 'FTU':
             return self.f_ftu(a_new)
-        elif method == 'FL':
+        if method == 'FL':
             return self.f_fl(s_new, a_new)
-        elif method == 'EO':
+        if method == 'EO':
             return self.f_eo(a_new)
-        elif method == 'AA':
+        if method == 'AA':
             assert s_new is not None
             return self.f_aa(s_new, a_new)
-        elif method == 'FLAP-1':
+        if method == 'FLAP-1':
             assert s_new is not None
             preprocess_method = kwargs.get('preprocess_method', None)
             return self.f_1(s_new, a_new, preprocess_method=preprocess_method)
-        elif method == 'FLAP-2':
+        if method == 'FLAP-2':
             assert s_new is not None
             preprocess_method = kwargs.get('preprocess_method', None)
             return self.f_2(s_new, a_new, preprocess_method=preprocess_method)
-        else:
-            raise ValueError('Method {:s} not implemented'.format(method))
+        raise ValueError('Method {:s} not implemented'.format(method))
 
     def eo_metric(self, a, methods, **kwargs):
         """Equal Oppurtunity metric.
@@ -479,6 +474,28 @@ class FairData(object):
                     method, a, np.broadcast_to(g, (a.shape[0], 1)), **kwargs
                 ))
             metrics[i] = np.max(np.abs(y.reshape(-1, 1) - y))
+        return metrics
+
+    def kl_metric(self, a, methods, **kwargs):
+        """KL divergence metric.
+
+        Args:
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (*, d).
+            methods: names of decision making methods to evaluate.
+
+        """
+        metrics = np.zeros(len(methods))
+        for i, method in enumerate(methods):
+            y = np.zeros((self.c, a.shape[0]))
+            for g in range(self.c):
+                y[g] = self.f_wrapper(
+                    method, a, np.broadcast_to(g, (a.shape[0], 1)), **kwargs
+                )
+            for g1 in range(self.c - 1):
+                for g2 in range(g1 + 1, self.c):
+                    kl = np.mean(entropy([y[g1], 1-y[g1]], [y[g2], 1-y[g2]]))
+                    metrics[i] = max(metrics[i], kl)
         return metrics
 
     def aa_metric(self, s, a, methods, **kwargs):
@@ -528,6 +545,47 @@ class FairData(object):
                 ))
             metrics[i] = np.max(np.abs(y.reshape(-1, 1) - y))
         return metrics
+
+    def cf_bounds(self, s, a, methods, **kwargs):
+        """Upper and lower bounds for counterfactual fairness"""
+        lb = np.empty(len(methods))
+        ub = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            if method not in self.bound:
+                pred = self.f_wrapper(
+                    method, self.a_train, self.s_train, **kwargs
+                )
+                self.bound[method] = [pred.min(), pred.max()]
+            p = np.mean(self.f_wrapper(method, a, s, **kwargs))
+            lb[i] = self.bound[method][0] - p
+            ub[i] = self.bound[method][1] - p
+        return lb, ub
+
+    def upper_bound(self, s, a, methods, **kwargs):
+        """Upper bound for counterfactual fairness"""
+        ub = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            if method not in self.bound:
+                pred = self.f_wrapper(
+                    method, self.a_train, self.s_train, **kwargs
+                )
+                self.bound[method] = [pred.min(), pred.max()]
+            p = np.mean(self.f_wrapper(method, a, s, **kwargs))
+            ub[i] = self.bound[method][1] - p
+        return ub
+
+    def lower_bound(self, s, a, methods, **kwargs):
+        """Lower bound for counterfactual fairness"""
+        lb = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            if method not in self.bound:
+                pred = self.f_wrapper(
+                    method, self.a_train, self.s_train, **kwargs
+                )
+                self.bound[method] = [pred.min(), pred.max()]
+            p = np.mean(self.f_wrapper(method, a, s, **kwargs))
+            lb[i] = self.bound[method][0] - p
+        return lb
 
     def accuracy(self, s, a, y, methods, **kwargs):
         """Accuracy in test data (deprecated due to randomness).
@@ -632,6 +690,9 @@ class FairData(object):
             'eo': 'eo_metric',
             'aa': 'aa_metric',
             'cf': 'cf_metric',
+            'ub': 'upper_bound',
+            'lb': 'lower_bound',
+            'kl': 'kl_metric',
             'acc': 'accuracy', 
             'mae': 'mae', 
             'roc': 'roc_auc', 
@@ -639,14 +700,14 @@ class FairData(object):
         }
         for metric in metrics:
             func = getattr(self, func_dict[metric])
-            if metric == 'eo':
-                rtn += (func(a_test, methods, **kwargs),)
-            elif metric == 'cf' or metric == 'aa':
+            if metric == 'eo' or metric == 'kl':
+                rtn += (func(a=a_test, methods=methods, **kwargs),)
+            elif metric in ['cf', 'aa', 'ub', 'lb']:
                 assert s_test is not None
-                rtn += (func(s_test, a_test, methods, **kwargs),)
+                rtn += (func(s=s_test, a=a_test, methods=methods, **kwargs),)
             elif metric in ['acc', 'mae', 'roc', 'ap']:
                 assert s_test is not None and y_test is not None
-                rtn += (func(s_test, a_test, y_test, methods, **kwargs),)
+                rtn += (func(s=s_test, a=a_test, y=y_test, methods=methods, **kwargs),)
             else:
                 raise ValueError('Metric {:s} not implemented'.format(metric))
         return rtn

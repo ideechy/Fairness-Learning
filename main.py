@@ -1,14 +1,14 @@
-# !/usr/bin/env python3
+#!/usr/bin/env python3
 
 import argparse
 import json
 import re
 import numpy as np
-import datagen
-from fairdata import FairData
 from multiprocessing import Pool
 from functools import partial
 
+import datagen
+from fairdata import FairData
 
 def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None, methods=None):
     if metrics is None:

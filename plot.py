@@ -3,6 +3,8 @@ import json
 import re
 import numpy as np
 import matplotlib.pyplot as plt
+from collections import OrderedDict
+
 import datagen
 
 MARKER = ['o', 'v', 's', 'p', 'h', '^', 'D', '*', 'H']
@@ -10,26 +12,26 @@ COLOR = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 
 def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, config_id,
-                       methods=None, para_format=None, xlabel=None, ylabels=None):
+                       methods=None, para_format=None, xlabel=None):
     if methods is None:
         methods = ['ML', 'FTU', 'FL', 'AA', 'FLAP-1', 'FLAP-2']
     metric_table_name = ['result/{:s}_n{:s}_{:s}_preprocess_{:s}_'.format(
         dat_gen.__name__, str(size), preprocess, config_id), '.npy']
-    metric_tables = ()
-    metrics_exist = []
+    metric_tables = OrderedDict()
     for metric in metrics:
         try:
             metric_table = np.load(metric.join(metric_table_name))
-            metric_tables += (metric_table.take(para_row, axis=1),)
-            metrics_exist.append(metric)
+            metric_tables[metric] = metric_table.take(para_row, axis=1)
         except FileNotFoundError as e:
             print(e)
-    if len(metrics_exist) == 0:
+    if len(metric_tables) == 0:
         raise Exception('No metric table file is found.')
-    metrics = metrics_exist
+    metrics = list(metric_tables.keys())
+    if 'lb' in metrics:
+        metrics.remove('lb')
     figure_name = 'figure/{:s}_{:s}_preprocess_{:s}_{:s}.pdf'.format(
         dat_gen.__name__, preprocess, config_id, '_'.join(metrics))
-    para = metric_tables[0][0, :, :-len(methods)]
+    para = metric_tables[metrics[0]][0, :, :-len(methods)]
     para_name = dat_gen.__code__.co_varnames[1:para.shape[1] + 1]
     para = para.take(para_col, axis=1)
     para_name = [para_name[i] for i in para_col]
@@ -42,24 +44,33 @@ def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, c
     if xlabel is None:
         xlabel = "Difference due to " + ', '.join(para_name)
     y_dict = {
-        'eo': 'EO-metric',
-        'aa': 'AA-metric',
-        'cf': 'CF-metric', 
+        'eo': 'EO metric',
+        'aa': 'AA metric',
+        'cf': 'CF metric',
+        'ub': 'CF bounds',
+        'kl': 'KL divergence',
         'acc': 'Test accuracy', 
         'mae': 'MAE',
         'roc': 'ROC AUC',
         'ap': 'Average precision',
     }
 
-    fig, axes = plt.subplots(1, len(metrics), figsize=(3 * len(metrics), 3))
-    for j, ax in enumerate(axes):
+    _, axes = plt.subplots(1, len(metrics), figsize=(3 * len(metrics), 3))
+    if len(metrics) == 1:
+        axes = [axes]
+    for metric, ax in zip(metrics, axes):
         for i in range(len(methods)):
-            ax.errorbar(x, metric_tables[j][0, :, i - len(methods)],
-                        metric_tables[j][1, :, i - len(methods)], label=methods[i])
+            ax.errorbar(x, metric_tables[metric][0, :, i - len(methods)],
+                        metric_tables[metric][1, :, i - len(methods)], 
+                        color=COLOR[i], label=methods[i])
+            if metric == 'ub':
+                ax.errorbar(x, metric_tables['lb'][0, :, i - len(methods)],
+                            metric_tables['lb'][1, :, i - len(methods)],
+                            color=COLOR[i])
         ax.set_xlabel(xlabel)
         if len(para_col) > 1:
             plt.setp(ax.get_xticklabels(), rotation=30, ha="right", rotation_mode="anchor")
-        ylabel = y_dict[metrics[j]] if ylabels is None else ylabels[j]
+        ylabel = y_dict[metric]
         ax.set_ylabel(ylabel)
     plt.tight_layout()
     axes[-1].legend(bbox_to_anchor=(1.02, 0.5), loc="center left", ncol=1)
@@ -98,7 +109,7 @@ def power_comparison(dat_gen, preprocess, sizes, para_loc, config_id,
     else:
         x = [para_format.format(*p) for p in para]
 
-    fig, ax = plt.subplots()
+    _, ax = plt.subplots()
     for i, size in enumerate(sizes):
         ax.scatter(x, power[i], marker=marker[i], label=size)
     ax.axhline(0.05, color='black', linewidth=0.5)
@@ -177,13 +188,14 @@ if __name__ == '__main__':
         preprocess_method = config['preprocess_method']
         parameter_format = config['parameter_format']
         x_label = config['x_label']
-        y_label = config['y_label']
         identifier = 'config_' + re.split('[_\\\\]', args.config_path)[-1][:-5]
         if mode == 'test':
             sample_sizes = config['sample_sizes']
             parameter_loc = config['parameter_loc']
         elif mode == 'eval':
             eval_metrics = config['plot_metrics']
+            if 'lb' in eval_metrics or 'ub' in eval_metrics:
+                assert 'lb' in eval_metrics and 'ub' in eval_metrics
             parameter_col = config['parameter_col']
             parameter_row = config['parameter_row']
         else:
@@ -198,4 +210,4 @@ if __name__ == '__main__':
     if mode == 'eval':
         prediction_metrics(data_generator_fun, preprocess_method_dict[preprocess_method],
                            N, eval_metrics, parameter_col, parameter_row, identifier,
-                           para_format=parameter_format, xlabel=x_label, ylabels=y_label)
+                           para_format=parameter_format, xlabel=x_label)
