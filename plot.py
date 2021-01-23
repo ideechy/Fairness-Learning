@@ -47,6 +47,7 @@ def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, c
         'eo': 'EO metric',
         'aa': 'AA metric',
         'cf': 'CF metric',
+        'cfb': 'CF bound',
         'ub': 'CF bounds',
         'kl': 'KL divergence',
         'acc': 'Test accuracy', 

@@ -561,30 +561,62 @@ class FairData(object):
             ub[i] = self.bound[method][1] - p
         return lb, ub
 
+    def cf_bound(self, s, a, methods, **kwargs):
+        """Upper and lower bounds for counterfactual fairness"""
+        cfb = np.empty(len(methods))
+        for i, method in enumerate(methods):
+            pred = self.f_wrapper(method, a, s, **kwargs)
+            bound = np.zeros((self.c, 2))
+            for g in range(self.c):
+                cfp = pred[s.squeeze() != g]
+                bound[g] = cfp.min(), cfp.max()
+            cfb[i] = np.mean(np.max(
+                [np.abs(pred - bound.take(s.squeeze(), 0)[:, 1]),
+                np.abs(pred - bound.take(s.squeeze(), 0)[:, 1])],
+                axis=0
+            ))
+        return cfb
+
     def upper_bound(self, s, a, methods, **kwargs):
         """Upper bound for counterfactual fairness"""
         ub = np.empty(len(methods))
         for i, method in enumerate(methods):
+            pred = self.f_wrapper(method, a, s, **kwargs)
             if method not in self.bound:
-                pred = self.f_wrapper(
-                    method, self.a_train, self.s_train, **kwargs
-                )
-                self.bound[method] = [pred.min(), pred.max()]
-            p = np.mean(self.f_wrapper(method, a, s, **kwargs))
-            ub[i] = self.bound[method][1] - p
+                self.bound[method] = np.empty((self.c, 3))
+                for g in range(self.c):
+            #         cf_pred = pred[s_train.squeeze() != g]
+            #         self.bound[method][g] = cf_pred.min(), cf_pred.max()
+            # ub[i] = np.mean(np.abs(self.bound[method].take(s.squeeze(), 0)[:, 1] - 
+            #             self.f_wrapper(method, a, s, **kwargs)))
+                    cfp = pred[s.squeeze() == g]
+                    self.bound[method][g] = cfp.min(), cfp.max(), cfp.mean()
+            g_adv = self.bound[method][:, 2].argmax()
+            p_adv_up = self.bound[method][g_adv, 1]
+            g_dis = self.bound[method][:, 2].argmin()
+            idx = np.squeeze(s == g_dis)
+            ub[i] = p_adv_up - np.mean(pred[idx])
         return ub
 
     def lower_bound(self, s, a, methods, **kwargs):
         """Lower bound for counterfactual fairness"""
         lb = np.empty(len(methods))
         for i, method in enumerate(methods):
+            pred = self.f_wrapper(method, a, s, **kwargs)
             if method not in self.bound:
-                pred = self.f_wrapper(
-                    method, self.a_train, self.s_train, **kwargs
-                )
-                self.bound[method] = [pred.min(), pred.max()]
-            p = np.mean(self.f_wrapper(method, a, s, **kwargs))
-            lb[i] = self.bound[method][0] - p
+                self.bound[method] = np.empty((self.c, 3))
+                for g in range(self.c):
+            #         cf_pred = pred[s_train.squeeze() != g]
+            #         self.bound[method][g] = cf_pred.min(), cf_pred.max()
+            # lb[i] = np.mean(np.abs(self.bound[method].take(s.squeeze(), 0)[:, 0] - 
+            #             self.f_wrapper(method, a, s, **kwargs)))
+                    cfp = pred[s.squeeze() == g]
+                    self.bound[method][g] = cfp.min(), cfp.max(), cfp.mean()
+            g_adv = self.bound[method][:, 2].argmax()
+            p_adv_low = self.bound[method][g_adv, 0]
+            g_dis = self.bound[method][:, 2].argmin()
+            idx = np.squeeze(s == g_dis)
+            lb[i] = p_adv_low - np.mean(pred[idx])
         return lb
 
     def accuracy(self, s, a, y, methods, **kwargs):
@@ -690,6 +722,7 @@ class FairData(object):
             'eo': 'eo_metric',
             'aa': 'aa_metric',
             'cf': 'cf_metric',
+            'cfb': 'cf_bound',
             'ub': 'upper_bound',
             'lb': 'lower_bound',
             'kl': 'kl_metric',
@@ -702,7 +735,7 @@ class FairData(object):
             func = getattr(self, func_dict[metric])
             if metric == 'eo' or metric == 'kl':
                 rtn += (func(a=a_test, methods=methods, **kwargs),)
-            elif metric in ['cf', 'aa', 'ub', 'lb']:
+            elif metric in ['cf', 'aa', 'ub', 'lb', 'cfb']:
                 assert s_test is not None
                 rtn += (func(s=s_test, a=a_test, methods=methods, **kwargs),)
             elif metric in ['acc', 'mae', 'roc', 'ap']:
