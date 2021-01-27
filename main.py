@@ -10,13 +10,29 @@ from functools import partial
 import datagen
 from fairdata import FairData
 
+def true_cf(dat_gen, n_train, n_test, paras, preprocess='m', methods=None):
+    if methods is None:
+        methods = ['ML', 'FTU', 'FL', 'AA', 'FLAP-1', 'FLAP-2']
+    dat_gen_cf = eval(f'{dat_gen.__module__}.{dat_gen.__name__}_counterfactual')
+    np.random.seed(0)
+    result = np.zeros((paras.shape[0], len(methods)))
+    for i, para in enumerate(paras):
+        s_train, a_train, y_train = dat_gen(n_train, *para)
+        data = FairData(
+            s_train=s_train, a_train=a_train, y_train=y_train, 
+            preprocess_method=preprocess, mode='predict'
+        )
+        a_test = dat_gen_cf(n_test, *para)
+        result[i] = data.cf_true(a=a_test, methods=methods)
+    return result
+
 def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None, methods=None):
     if metrics is None:
         metrics = ['cf', 'mae', 'roc', 'ap']
     if methods is None:
         methods = ['ML', 'FTU', 'FL', 'AA', 'FLAP-1', 'FLAP-2']
     np.random.seed(None)
-    result = np.zeros((paras.shape[0], len(metrics), 6))
+    result = np.zeros((paras.shape[0], len(metrics), len(methods)))
     n = n_train + n_test
     for i, para in enumerate(paras):
         s, a, y = dat_gen(n, *para)
@@ -127,5 +143,7 @@ if __name__ == '__main__':
         for i, metric in enumerate(eval_metrics):
             eval_result = [np.hstack((parameters, res)) for res in eval_results[:, :, i, :]]
             np.save(file_prefix + metric, np.asarray(eval_result))
+        truth = true_cf(data_generator_fun, N_train, N_train, parameters, preprocess_method)
+        np.save(file_prefix + 'cft', np.expand_dims(np.hstack((parameters, truth)), 0))
     else:
         pass

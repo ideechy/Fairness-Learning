@@ -48,6 +48,8 @@ def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, c
         'aa': 'AA metric',
         'cf': 'CF metric',
         'cfb': 'CF bound',
+        'cfbm': 'CF bound',
+        'cft': 'CF truth',
         'ub': 'CF bounds',
         'kl': 'KL divergence',
         'acc': 'Test accuracy', 
@@ -61,13 +63,17 @@ def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, c
         axes = [axes]
     for metric, ax in zip(metrics, axes):
         for i in range(len(methods)):
-            ax.errorbar(x, metric_tables[metric][0, :, i - len(methods)],
-                        metric_tables[metric][1, :, i - len(methods)], 
-                        color=COLOR[i], label=methods[i])
-            if metric == 'ub':
-                ax.errorbar(x, metric_tables['lb'][0, :, i - len(methods)],
-                            metric_tables['lb'][1, :, i - len(methods)],
-                            color=COLOR[i])
+            if metric == 'cft':
+                ax.plot(x, metric_tables[metric][0, :, i - len(methods)], 
+                    color=COLOR[i], label=methods[i])
+            else:
+                ax.errorbar(x, metric_tables[metric][0, :, i - len(methods)],
+                    metric_tables[metric][1, :, i - len(methods)], 
+                    color=COLOR[i], label=methods[i])
+                if metric == 'ub':
+                    ax.errorbar(x, metric_tables['lb'][0, :, i - len(methods)],
+                        metric_tables['lb'][1, :, i - len(methods)],
+                        color=COLOR[i])
         ax.set_xlabel(xlabel)
         if len(para_col) > 1:
             plt.setp(ax.get_xticklabels(), rotation=30, ha="right", rotation_mode="anchor")

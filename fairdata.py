@@ -220,6 +220,20 @@ class FairData(object):
                         a_prime[i, j] += self.a_sort[_s][int((n_s[_s] - 1) * p), j] * prob_s
         return a_prime
 
+    def sample_margin(self, s, a, s_prime, p_range=0.05, b=50):
+        n, d = a.shape
+        a_prime = np.zeros((n, b, d), dtype='float')
+        # number of samples for each s
+        n_s = [self.a_sort[c].shape[0] for c in range(self.c)]
+        for i in range(n):
+            for j, ecdf in enumerate(self.a_ecdf[s[i, 0]]):
+                p = ecdf(a[i, j])
+                idx_lo = int((n_s[s_prime]-1) * max(0, p-p_range))
+                idx_hi = int((n_s[s_prime]-1) * min(1, p+p_range)) + 1
+                idx = np.random.choice(np.arange(idx_lo, idx_hi), b)
+                a_prime[i, :, j] = self.a_sort[s_prime][idx, j]
+        return a_prime
+
     def process_margin_random(self, s, a, s_prime=None):
         """Preprocess data using marginal distribution mapping.
 
@@ -546,78 +560,79 @@ class FairData(object):
             metrics[i] = np.max(np.abs(y.reshape(-1, 1) - y))
         return metrics
 
-    def cf_bounds(self, s, a, methods, **kwargs):
-        """Upper and lower bounds for counterfactual fairness"""
-        lb = np.empty(len(methods))
-        ub = np.empty(len(methods))
-        for i, method in enumerate(methods):
-            if method not in self.bound:
-                pred = self.f_wrapper(
-                    method, self.a_train, self.s_train, **kwargs
-                )
-                self.bound[method] = [pred.min(), pred.max()]
-            p = np.mean(self.f_wrapper(method, a, s, **kwargs))
-            lb[i] = self.bound[method][0] - p
-            ub[i] = self.bound[method][1] - p
-        return lb, ub
+    def cf_bound(self, s, a, methods, p_range=0.05, b=50, **kwargs):
+        """Absolute bound for counterfactual fairness
+        
+        Args:
+            s (numpy.ndarray): categorical sensitive test attributes,
+                must have shape (*, 1).
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (*, d).
+            methods: names of decision making methods to evaluate.
 
-    def cf_bound(self, s, a, methods, **kwargs):
-        """Upper and lower bounds for counterfactual fairness"""
-        cfb = np.empty(len(methods))
+        """
+        metrics = np.empty(len(methods))
+        n, d = a.shape
+        a_prime = dict()
+        for g in range(self.c):
+            a_prime[g] = self.sample_margin(s, a, g, p_range, b).reshape(-1, d)
         for i, method in enumerate(methods):
-            pred = self.f_wrapper(method, a, s, **kwargs)
-            bound = np.zeros((self.c, 2))
+            pred = self.f_wrapper(method, a, s, **kwargs).repeat(b)
+            y = np.zeros(self.c)
             for g in range(self.c):
-                cfp = pred[s.squeeze() != g]
-                bound[g] = cfp.min(), cfp.max()
-            cfb[i] = np.mean(np.max(
-                [np.abs(pred - bound.take(s.squeeze(), 0)[:, 1]),
-                np.abs(pred - bound.take(s.squeeze(), 0)[:, 1])],
-                axis=0
-            ))
-        return cfb
+                pred_cf = self.f_wrapper(
+                    method, a_prime[g], np.broadcast_to(g, (n*b, 1)), **kwargs)
+                y[g] = np.max(np.abs(pred_cf - pred))
+            metrics[i] = y.max()
+        return metrics
 
-    def upper_bound(self, s, a, methods, **kwargs):
-        """Upper bound for counterfactual fairness"""
-        ub = np.empty(len(methods))
+    def cf_bound_mean(self, s, a, methods, p_range=0.05, b=50, **kwargs):
+        """Absolute bound for counterfactual fairness
+        
+        Args:
+            s (numpy.ndarray): categorical sensitive test attributes,
+                must have shape (*, 1).
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (*, d).
+            methods: names of decision making methods to evaluate.
+
+        """
+        metrics = np.empty(len(methods))
+        n, d = a.shape
+        a_prime = dict()
+        for g in range(self.c):
+            a_prime[g] = self.sample_margin(s, a, g, p_range, b).reshape(-1, d)
         for i, method in enumerate(methods):
             pred = self.f_wrapper(method, a, s, **kwargs)
-            if method not in self.bound:
-                self.bound[method] = np.empty((self.c, 3))
-                for g in range(self.c):
-            #         cf_pred = pred[s_train.squeeze() != g]
-            #         self.bound[method][g] = cf_pred.min(), cf_pred.max()
-            # ub[i] = np.mean(np.abs(self.bound[method].take(s.squeeze(), 0)[:, 1] - 
-            #             self.f_wrapper(method, a, s, **kwargs)))
-                    cfp = pred[s.squeeze() == g]
-                    self.bound[method][g] = cfp.min(), cfp.max(), cfp.mean()
-            g_adv = self.bound[method][:, 2].argmax()
-            p_adv_up = self.bound[method][g_adv, 1]
-            g_dis = self.bound[method][:, 2].argmin()
-            idx = np.squeeze(s == g_dis)
-            ub[i] = p_adv_up - np.mean(pred[idx])
-        return ub
+            y = np.zeros(self.c)
+            for g in range(self.c):
+                pred_cf = self.f_wrapper(
+                    method, a_prime[g], np.broadcast_to(g, (n*b, 1)), **kwargs)
+                y[g] = np.max(np.abs(pred_cf.reshape(n, b).mean(axis=1) - pred))
+            metrics[i] = y.max()
+        return metrics
 
-    def lower_bound(self, s, a, methods, **kwargs):
-        """Lower bound for counterfactual fairness"""
-        lb = np.empty(len(methods))
+    def cf_true(self, a, methods, **kwargs):
+        """True counterfactual fairness difference for simulated data
+        
+        Args:
+            a (numpy.ndarray): non-sensitive test attributes, must
+                have shape (c, *, d).
+            methods: names of decision making methods to evaluate.
+
+        """
+        n = a.shape[1]
+        metrics = np.zeros(len(methods))
         for i, method in enumerate(methods):
-            pred = self.f_wrapper(method, a, s, **kwargs)
-            if method not in self.bound:
-                self.bound[method] = np.empty((self.c, 3))
-                for g in range(self.c):
-            #         cf_pred = pred[s_train.squeeze() != g]
-            #         self.bound[method][g] = cf_pred.min(), cf_pred.max()
-            # lb[i] = np.mean(np.abs(self.bound[method].take(s.squeeze(), 0)[:, 0] - 
-            #             self.f_wrapper(method, a, s, **kwargs)))
-                    cfp = pred[s.squeeze() == g]
-                    self.bound[method][g] = cfp.min(), cfp.max(), cfp.mean()
-            g_adv = self.bound[method][:, 2].argmax()
-            p_adv_low = self.bound[method][g_adv, 0]
-            g_dis = self.bound[method][:, 2].argmin()
-            idx = np.squeeze(s == g_dis)
-            lb[i] = p_adv_low - np.mean(pred[idx])
-        return lb
+            y = np.zeros((self.c, n))
+            for g in range(self.c):
+                y[g] = self.f_wrapper(
+                    method, a[g], np.broadcast_to(g, (n, 1)), **kwargs
+                )
+            for g1 in range(self.c):
+                for g2 in range(g1):
+                    metrics[i] = max(metrics[i], np.max(np.abs(y[g1] - y[g2])))
+        return metrics
 
     def accuracy(self, s, a, y, methods, **kwargs):
         """Accuracy in test data (deprecated due to randomness).
@@ -713,6 +728,11 @@ class FairData(object):
             rtn (tuple): metric values in the order of metrics.
 
         """
+        a_test = np.asarray(a_test)
+        if s_test is not None: 
+            s_test = np.asarray(s_test)
+        if y_test is not None: 
+            y_test = np.asarray(y_test)
         if metrics is None:
             metrics = ['eo', 'cf', 'mae']
         if methods is None:
@@ -723,8 +743,7 @@ class FairData(object):
             'aa': 'aa_metric',
             'cf': 'cf_metric',
             'cfb': 'cf_bound',
-            'ub': 'upper_bound',
-            'lb': 'lower_bound',
+            'cfbm': 'cf_bound_mean',
             'kl': 'kl_metric',
             'acc': 'accuracy', 
             'mae': 'mae', 
@@ -735,7 +754,7 @@ class FairData(object):
             func = getattr(self, func_dict[metric])
             if metric == 'eo' or metric == 'kl':
                 rtn += (func(a=a_test, methods=methods, **kwargs),)
-            elif metric in ['cf', 'aa', 'ub', 'lb', 'cfb']:
+            elif metric in ['cf', 'aa', 'cfb', 'cfbm']:
                 assert s_test is not None
                 rtn += (func(s=s_test, a=a_test, methods=methods, **kwargs),)
             elif metric in ['acc', 'mae', 'roc', 'ap']:

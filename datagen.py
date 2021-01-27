@@ -37,10 +37,19 @@ def dat_gen_admission(n, intcp, beta_a, beta_s, lmbd):
     return s.reshape(n, 1), a.reshape(n, 1), y.reshape(n, 1)
 
 
-def dat_gen_admission_unfairness(intcp, beta_a, beta_s, lmbd):
-    """Calculate the unfairness metric of admission data generator.
+def dat_gen_admission_counterfactual(n, intcp, beta_a, beta_s, lmbd):
+    """Generating counterfactual admission data."""
+    # 1: advantageous race, 0: disadvantageous race
+    eps = np.random.rand(n)
+    a = np.array([
+        np.clip(lmbd * 0 + eps, 0, 1), 
+        np.clip(lmbd * 1 + eps, 0, 1)
+    ])
+    return a.reshape((2, n, 1))
 
-    """
+
+def dat_gen_admission_unfairness(intcp, beta_a, beta_s, lmbd):
+    """Calculate the unfairness metric of admission data generator."""
     return integrate.quad(
         lambda x:
         (expit(intcp + beta_a * np.clip(lmbd + x, 0, 1) + beta_s) -
@@ -94,6 +103,20 @@ def dat_gen_loan_univariate(n, intcp, beta_a, beta_s, lmbd_a, sigma_a=None,
     p = expit(intcp + beta_a * a + beta_s * s)
     y = np.random.binomial(1, p=p)
     return s.reshape(n, 1), a.reshape(n, 1), y.reshape(n, 1)
+
+
+def dat_gen_loan_univariate_counterfactual(
+    n, intcp, beta_a, beta_s, lmbd_a, sigma_a=None, adv_race_proportion=0.7):
+    """Generating counterfactual loan data."""
+    # 1: advantageous race, 0: disadvantageous race
+    u = np.random.randn(n)
+    if sigma_a is None:
+        sigma_a = 1
+    a = np.array([
+        np.exp(4+0.2*u) / 100,
+        np.exp(4+lmbd_a+0.2*sigma_a*u) / 100
+    ])
+    return a.reshape((2, n, 1))
     
 
 def dat_gen_reward_univariate_linear(s, a, y, intcp, beta_a, beta_s):
@@ -128,11 +151,8 @@ def dat_gen_reward_univariate_ncdf(s, a, y):
     return r_star.reshape(n, 1), r.reshape(n, 1)
 
 
-
 def dat_gen_loan_univariate_unfairness(intcp, beta_a, beta_s, lmbd_a, sigma_a=1):
-    """Calculate the unfairness metric of loan data generator.
-
-    """
+    """Calculate the unfairness metric of loan data generator."""
     return integrate.quad(
         lambda x:
         (expit(intcp + beta_a * np.exp(4 + lmbd_a + 0.2 * sigma_a * x) / 100 + beta_s) -
@@ -141,15 +161,23 @@ def dat_gen_loan_univariate_unfairness(intcp, beta_a, beta_s, lmbd_a, sigma_a=1)
 
 
 def dat_gen_loan_multivariate_wrapper(
-    n, intcp, beta_e, beta_i, beta_s1=0,
-    beta_s2=0, lmbd_e1=0, lmbd_e2=0,
-    lmbd_i1=0, lmdb_i2=0, lmbd_e0=1.07,
-    lmbd_i0=0.58, race_proportion=None):
+    n, intcp, beta_e, beta_i, beta_s1=0, beta_s2=0, lmbd_e1=0, lmbd_e2=0,
+    lmbd_i1=0, lmdb_i2=0, lmbd_e0=1.07, lmbd_i0=0.58, race_proportion=None):
     beta_s = [intcp, intcp + beta_s1, intcp + beta_s2]
     race_mean_edu = np.array([lmbd_e0, lmbd_e0 + lmbd_e1, lmbd_e0 + lmbd_e2])
     race_med_income = np.array([lmbd_i0, lmbd_i0 + lmbd_i1, lmbd_i0 + lmdb_i2])
-    return dat_gen_loan_multivariate(n, beta_e, beta_i, beta_s, race_mean_edu,
-                                     race_med_income, race_proportion)
+    return dat_gen_loan_multivariate(
+        n, beta_e, beta_i, beta_s, race_mean_edu, race_med_income, 
+        race_proportion)
+
+
+def dat_gen_loan_multivariate_wrapper_counterfactual(
+    n, intcp, beta_e, beta_i, beta_s1=0, beta_s2=0, lmbd_e1=0, lmbd_e2=0,
+    lmbd_i1=0, lmdb_i2=0, lmbd_e0=1.07, lmbd_i0=0.58, race_proportion=None):
+    race_mean_edu = np.array([lmbd_e0, lmbd_e0 + lmbd_e1, lmbd_e0 + lmbd_e2])
+    race_med_income = np.array([lmbd_i0, lmbd_i0 + lmbd_i1, lmbd_i0 + lmdb_i2])
+    return dat_gen_loan_multivariate_counterfactual(
+        n, beta_e, beta_i, None, race_mean_edu, race_med_income, None)
 
 
 def dat_gen_loan_multivariate_wrapper_unfairness(
@@ -242,6 +270,39 @@ def dat_gen_loan_multivariate(
     # non-sensitive attributes
     a = np.column_stack((e, i))
     return s.reshape(n, 1), a, y.reshape(n, 1)
+
+
+def dat_gen_loan_multivariate_counterfactual(
+    n, beta_e, beta_i, beta_s, 
+    race_mean_edu=None, race_med_income=None, race_proportion=None):
+    """Generating counterfactual loan data."""
+    if race_mean_edu is None:
+        race_mean_edu = np.array([1.07, 0.99, 1.26])
+    else:
+        race_mean_edu = np.array(race_mean_edu)
+    if race_med_income is None:
+        race_med_income = np.array([0.58, 0.40, 0.81])
+    else:
+        race_med_income = np.array(race_med_income)
+    assert race_mean_edu.ndim == 1
+    assert race_mean_edu.shape == race_med_income.shape
+
+    a = np.empty((3, n, 2))
+    e_sd = race_mean_edu[0] / 2.5
+    e_eps = np.random.normal(0, e_sd, size=n)
+    i_eps = np.random.normal(0, 0.1, size=n)
+    for s in range(3):
+        # education years e = e_mean + e_eps
+        e_mean = race_mean_edu[s]
+        e = np.clip(e_mean + e_eps, 0, None)
+        # income log(i) = log(i_med) + e_eps + i_eps
+        i_med = race_med_income[s]
+        i_mu = np.log(i_med) + e_eps
+        i = np.exp(i_mu + i_eps)
+        # non-sensitive attributes
+        a[s] = np.column_stack((e, i))
+    return a
+
 
 def dat_gen_reward_multivariate_linear(s, a, y, beta_e, beta_i, beta_s):
     n = len(y)
