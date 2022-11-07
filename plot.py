@@ -58,18 +58,19 @@ def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, c
         'ap': 'Average precision',
     }
 
-    _, axes = plt.subplots(1, len(metrics), figsize=(3 * len(metrics), 3))
+    fig, axes = plt.subplots(1, len(metrics), figsize=(2.5 * len(metrics), 2.5))
     if len(metrics) == 1:
         axes = [axes]
     for metric, ax in zip(metrics, axes):
+        labels = methods if metric == metrics[0] else [None] * len(methods)
         for i in range(len(methods)):
             if metric == 'cft':
                 ax.plot(x, metric_tables[metric][0, :, i - len(methods)], 
-                    color=COLOR[i], label=methods[i])
+                    color=COLOR[i], label=labels[i])
             else:
                 ax.errorbar(x, metric_tables[metric][0, :, i - len(methods)],
                     metric_tables[metric][1, :, i - len(methods)], 
-                    color=COLOR[i], label=methods[i])
+                    color=COLOR[i], label=labels[i])
                 if metric == 'ub':
                     ax.errorbar(x, metric_tables['lb'][0, :, i - len(methods)],
                         metric_tables['lb'][1, :, i - len(methods)],
@@ -80,7 +81,8 @@ def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, c
         ylabel = y_dict[metric]
         ax.set_ylabel(ylabel)
     plt.tight_layout()
-    axes[-1].legend(bbox_to_anchor=(1.02, 0.5), loc="center left", ncol=1)
+    # axes[-1].legend(bbox_to_anchor=(1.02, 0.5), loc="center left", ncol=1)
+    fig.legend(bbox_to_anchor=(0.5,1.02), loc="lower center", borderaxespad=0, ncol=len(methods))
     plt.savefig(figure_name, bbox_inches='tight')
 
 
@@ -116,7 +118,7 @@ def power_comparison(dat_gen, preprocess, sizes, para_loc, config_id,
     else:
         x = [para_format.format(*p) for p in para]
 
-    _, ax = plt.subplots()
+    _, ax = plt.subplots(figsize=(5, 3.5))
     for i, size in enumerate(sizes):
         ax.scatter(x, power[i], marker=marker[i], label=size)
     ax.axhline(0.05, color='black', linewidth=0.5)
@@ -195,7 +197,8 @@ if __name__ == '__main__':
         preprocess_method = config['preprocess_method']
         parameter_format = config['parameter_format']
         x_label = config['x_label']
-        identifier = 'config_' + re.split('[_\\\\]', args.config_path)[-1][:-5]
+        y_label = config['y_label']
+        identifier = 'config_' + args.config_path.split('/')[-1][:-5]
         if mode == 'test':
             sample_sizes = config['sample_sizes']
             parameter_loc = config['parameter_loc']

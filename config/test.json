@@ -1,0 +1,17 @@
+{
+  "mode":"eval",
+  "M": 100,
+  "N": 5000,
+  "P": 8,
+  "data_generator_fun": "datagen.dat_gen_test",
+  "adv_group": 1,
+  "preprocess_method": "m",
+  "parameters": "np.mgrid[-1:0, 2:3, 1:2, 0:1:0.2].reshape(4, -1).transpose()",
+  "eval_metrics": ["cf", "cfbm", "acc"],
+  "plot_metrics": ["cf", "cfbm", "acc"],
+  "parameter_col": [3],
+  "parameter_row": [0,1,2,3,4],
+  "parameter_format": null,
+  "x_label": "Difference due to $\\lambda$",
+  "y_label": null
+}

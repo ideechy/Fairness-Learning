@@ -114,7 +114,7 @@ if __name__ == '__main__':
         data_generator_fun = eval(config['data_generator_fun'])
         parameters = eval(config['parameters'])
         preprocess_method = config['preprocess_method']
-        identifier = 'config_' + re.split('[_\\\\]', args.config_path)[-1][:-5]
+        identifier = 'config_' + args.config_path.split('/')[-1][:-5]
         if mode == 'test':
             B = config['B']
         elif mode == 'eval':
@@ -143,7 +143,7 @@ if __name__ == '__main__':
         for i, metric in enumerate(eval_metrics):
             eval_result = [np.hstack((parameters, res)) for res in eval_results[:, :, i, :]]
             np.save(file_prefix + metric, np.asarray(eval_result))
-        truth = true_cf(data_generator_fun, N_train, N_train, parameters, preprocess_method)
-        np.save(file_prefix + 'cft', np.expand_dims(np.hstack((parameters, truth)), 0))
+        # truth = true_cf(data_generator_fun, N_train, N_train, parameters, preprocess_method)
+        # np.save(file_prefix + 'cft', np.expand_dims(np.hstack((parameters, truth)), 0))
     else:
         pass

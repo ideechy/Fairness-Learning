@@ -1,0 +1,15 @@
+{
+  "mode":"test",
+  "M": 1000,
+  "N": 50,
+  "B": 99,
+  "P": 8,
+  "data_generator_fun": "datagen.dat_gen_test",
+  "preprocess_method": "m",
+  "parameters": "np.mgrid[-1:0, 2:3, 0:2, 0:1:0.3].reshape(4, -1).transpose()",
+  "sample_sizes": [50],
+  "parameter_loc": [3],
+  "parameter_format": "({:.1f}, {:.1f})",
+  "x_label": "Bias and historical disadvantage $(\\beta_{s}, \\lambda)$",
+  "y_label": "P(reject $H_0|\\beta_{s}, \\lambda$)"
+}

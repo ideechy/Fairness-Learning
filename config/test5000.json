@@ -1,0 +1,17 @@
+{
+  "mode":"eval",
+  "M": 100,
+  "N": 5000,
+  "T": 5000,
+  "P": 8,
+  "data_generator_fun": "datagen.dat_gen_loan_multivariate_wrapper",
+  "adv_group": 0,
+  "preprocess_method": "m",
+  "parameters": "np.mgrid[-1:0, 1:2, 2:3, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1].reshape(9,-1).transpose()",
+  "eval_metrics": ["cf", "mae"],
+  "parameter_col": [5,6],
+  "parameter_row": [0,1,2,3,4,5,6,7,8],
+  "parameter_format": "({:.1f}, {:.1f})",
+  "x_label": "Difference due to $(\\lambda_{e1}, \\lambda_{e2})$",
+  "y_label": null
+}

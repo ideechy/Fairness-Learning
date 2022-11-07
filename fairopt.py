@@ -156,8 +156,7 @@ class FairOptimization(FairData):
         return np.mean((c * self.r_train + (c - pi_c) * y_hat * r_hat) / pi_c)
 
     def optimize(
-        self, estimation_fun, estimation_args=None, 
-        method=None, eta0=None, bounds=None, **kwargs):
+        self, estimation_fun, estimation_args=None, method=None, **kwargs):
         """Find the optimal parameter which maximizes the estimated expect reward
 
         Args:
@@ -166,12 +165,6 @@ class FairOptimization(FairData):
             estimation_args (dict): keyword arguments passed to the estimation
                 function.
             method (str): type of solver passed to `scipy.optimize.minimize`.
-            eta0 (numpy.ndarray): initial guess of the parameter with shape 
-                (d, ). If not given, set to be the coefficients of the logistic
-                regression of the training decisions on the preprocessed data.
-            bounds (sequence): search range of the parameters. `(min, max)` 
-                pairs for each element in eta, defining the lower and upper 
-                bounds for the optimizing argument of `estimation_fun`.
 
         Returns:
             The optimization result as `OptimizeResult` object. Important 
@@ -180,26 +173,19 @@ class FairOptimization(FairData):
             describes the cause of the termination. 
 
         """
-        if eta0 is None:
-            eta0 = self.ftup.params
-        else:
-            eta0 = np.asarray(eta0).reshape(-1, )
-            assert eta0.shape[0] == self.d + 1
-        if bounds is None:
-            bounds = [(e / 10, e * 10) if e > 0 else (e * 10, e / 10) for e in eta0]
-        else:
-            assert len(bounds) == self.d + 1
+        eta0 = self.ftup.params
+        bounds = [(-1, 1)] * (self.d + 1)
         if estimation_args is None:
             estimation_args = dict()
         fun = lambda x: -estimation_fun(x, **estimation_args)
         if method == 'shgo':
-            eta_opt = optimize.shgo(fun, bounds)
+            eta_opt = optimize.shgo(fun, bounds, **kwargs)
         elif method == 'dual_annealing':
-            eta_opt = optimize.dual_annealing(fun, bounds)
+            eta_opt = optimize.dual_annealing(fun, bounds, **kwargs)
         elif method == 'differential_evolution':
-            eta_opt = optimize.differential_evolution(fun, bounds)
+            eta_opt = optimize.differential_evolution(fun, bounds, **kwargs)
         elif method == 'basinhopping':
-            eta_opt = optimize.basinhopping(fun, bounds)
+            eta_opt = optimize.basinhopping(fun, bounds, **kwargs)
         else:
             eta_opt = optimize.minimize(fun, eta0, method=method, **kwargs)
         return eta_opt

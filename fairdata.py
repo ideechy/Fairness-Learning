@@ -650,7 +650,7 @@ class FairData(object):
         metrics = np.empty(len(methods))
         for i, method in enumerate(methods):
             p = self.f_wrapper(method, a, s, **kwargs)
-            metrics[i] = accuracy_score(y, p)
+            metrics[i] = np.mean(p*y + (1-p)*(1-y))
         return metrics
 
     def mae(self, s, a, y, methods, **kwargs):

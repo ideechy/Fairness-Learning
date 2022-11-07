@@ -5,6 +5,35 @@ import scipy.integrate as integrate
 from scipy.stats import norm
 
 
+def dat_gen_test(n, intcp, beta_a, beta_s, lmbd):
+    """Generating test data.
+
+    A = lmdb * S * U
+
+    Args:
+        n: sample size.
+        lmbd: historical disadvantage.
+        intcp: intercept in the logistic model for Y.
+        beta_a: coefficient of A in the logistic model for Y.
+        beta_s: selection bias, male will have a higher probability of
+            admission if beta_s is positive.
+
+    Returns:
+        A tuple of three numpy.ndarrays (s, a, y).
+
+        s: sensitive attributes, numpy.ndarray of size (n, 1).
+        a: non-sensitive attributes, numpy.ndarray of size (n, 1).
+        y: decisions, numpy.ndarray of size (n, 1).
+    """
+    # 1: advantageous race, 0: disadvantageous race
+    s = np.random.binomial(1, p=0.5, size=n)
+    u = np.random.rand(n)
+    eps = np.random.rand(n) * 0.01
+    a = lmbd * (s - 0.25) * u + eps
+    y = np.random.binomial(1, p=expit(intcp + beta_a * a + beta_s * s))
+    return s.reshape(n, 1), a.reshape(n, 1), y.reshape(n, 1)
+
+
 def dat_gen_admission(n, intcp, beta_a, beta_s, lmbd):
     """Generating admission data.
 

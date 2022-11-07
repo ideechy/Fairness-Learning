@@ -4,7 +4,6 @@ __pycache__
 *.R
 .R*
 *.npy
-config/*
 data/*
 figure/*
 result/*

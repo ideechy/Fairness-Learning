@@ -1,0 +1,15 @@
+{
+  "mode": "test",
+  "M": 1000,
+  "N": 200,
+  "B": 99,
+  "P": 16,
+  "data_generator_fun": "datagen.dat_gen_loan_univariate",
+  "preprocess_method": "m",
+  "parameters": "np.mgrid[-8:-7, 10:11, 0:2, 0:1:0.5, 1:4:2].reshape(5, -1).transpose()",
+  "sample_sizes": [50, 100, 200],
+  "parameter_loc": [2, 3, 4],
+  "parameter_format": null,
+  "x_label": "unfairness metirc of $\\beta_{s}, \\lambda, \\sigma$",
+  "y_label": "P(reject $H_0|\\beta_{s}, \\lambda, \\sigma$)"
+}
