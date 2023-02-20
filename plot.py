@@ -13,6 +13,24 @@ COLOR = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, config_id,
                        methods=None, para_format=None, xlabel=None):
+    """
+    Plot fairness evaluation metrics
+
+    Args:
+        dat_gen: data generation function, the function name and variable names
+            are used as labels
+        preprocess: name of the preprocess method, used to find the metrics 
+            file and also used in output file
+        size: data size, used to find the metrics file
+        metrics: list of evaluation metrics to plot, should be a subset of the 
+            rows in the metric table
+        para_col: column indices of parameters to use as x-axis
+        para_row: row indices of parameter combination to plot
+        config_id: suffix of metric file
+        methods: list of methods to plot
+        para_format: optional format to plot the parameter values
+        xlabel: optional x-axis label name
+    """
     if methods is None:
         methods = ['ML', 'FTU', 'FL', 'AA', 'FLAP-1', 'FLAP-2']
     metric_table_name = ['result/{:s}_n{:s}_{:s}_preprocess_{:s}_'.format(
@@ -88,6 +106,21 @@ def prediction_metrics(dat_gen, preprocess, size, metrics, para_col, para_row, c
 
 def power_comparison(dat_gen, preprocess, sizes, para_loc, config_id,
                      para_format=None, xlabel=None, ylabel=None):
+    """
+    Plot power of the counterfactual fairness test
+
+    Args:
+        dat_gen: data generation function, the function name and variable names
+            are used as labels
+        preprocess: name of the preprocess method, used to find the metrics 
+            files and also used in output file
+        sizes: list of data sizes, used to find the metrics files
+        para_loc: column indices of parameters to use as x-axis
+        config_id: suffix of metric files
+        para_format: optional format to plot the parameter values
+        xlabel: optional x-axis label name
+        ylabel: optional y-axis label name
+    """
     power_table_name = ['result/' + dat_gen.__name__ + '_n',
                         '_' + preprocess + '_preprocess_' + config_id + '_power_table.npy']
     figure_name = 'figure/' + dat_gen.__name__ + '_' + preprocess + '_preprocess_' + config_id + '_power.pdf'
@@ -133,32 +166,6 @@ def power_comparison(dat_gen, preprocess, sizes, para_loc, config_id,
     plt.legend(loc='best', title='sample size')
     plt.tight_layout()
     plt.savefig(figure_name)
-
-def reward_3d(fairopt, estimation_method, eta, bounds, estimation_args=None):
-    x = np.linspace(*bounds[0], 10)
-    y = np.linspace(*bounds[1], 10)
-    xg, yg = np.meshgrid(x, y)
-    est = np.empty_like(xg)
-    fun = getattr(fairopt, estimation_method)
-    if estimation_args is None:
-        estimation_args = dict()
-    idx1 = eta.index(None)
-    idx2 = eta.index(None, idx1 + 1)
-    params = eta.copy()
-    for i in range(len(x)):
-        params[idx1] = x[i]
-        for j in range(len(y)):
-            params[idx2] = y[j]
-            est[i, j] = fun(params, **estimation_args)
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.view_init(45, -45)
-    ax.plot_surface(xg, yg, est, cmap='terrain')
-    ax.set_xlabel('eta' + str(idx1))
-    ax.set_ylabel('eta' + str(idx2))
-    ax.set_zlabel(estimation_method)
-    plt.show()
 
 
 if __name__ == '__main__':

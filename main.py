@@ -11,6 +11,24 @@ import datagen
 from fairdata import FairData
 
 def true_cf(dat_gen, n_train, n_test, paras, preprocess='m', methods=None):
+    """
+    True counterfactual fairness difference for simulated data
+
+    Args:
+        dat_gen: data generation function
+        n_train: train sample size
+        n_test: test sample size
+        paras: combinations of parameters passed to the data generation 
+            function
+        preprocess: string representation of the preprocess method, 'm' stands 
+            for marginal distribution mapping, 'o' stands for orthogonaliztion
+        methods: list of decision making methods to evaluate, see FairData for 
+            details.
+
+    Returns:
+        result: a numpy array of results where the dimensions are 
+            (# parameter combinations, # methods)
+    """
     if methods is None:
         methods = ['ML', 'FTU', 'FL', 'AA', 'FLAP-1', 'FLAP-2']
     dat_gen_cf = eval(f'{dat_gen.__module__}.{dat_gen.__name__}_counterfactual')
@@ -27,6 +45,25 @@ def true_cf(dat_gen, n_train, n_test, paras, preprocess='m', methods=None):
     return result
 
 def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None, methods=None):
+    """
+    Fairness evaluation for one dataset
+
+    Args:
+        dat_gen: data generation function
+        n_train: train sample size
+        n_test: test sample size
+        paras: combinations of parameters passed to the data generation 
+            function
+        preprocess: string representation of the preprocess method, 'm' stands 
+            for marginal distribution mapping, 'o' stands for orthogonaliztion
+        metrics: list of evaluation metrics, see FairData for details
+        methods: list of decision making methods to evaluate, see FairData for 
+            details.
+
+    Returns:
+        result: a numpy array of results where the dimensions are 
+            (# parameter combinations, # metrics, # methods)
+    """
     if metrics is None:
         metrics = ['cf', 'mae', 'roc', 'ap']
     if methods is None:
@@ -48,6 +85,13 @@ def fairness(dat_gen, n_train, n_test, paras, preprocess='m', metrics=None, meth
 
 
 def parallel_fairness(dat_gen, n_train, n_test, paras, m, num_procs=4, preprocess='m', metrics=None, methods=None):
+    """
+    A wrapper of the fairness evaluation that run multiple tests in parallel
+
+    Args:
+        m: number of datasets to simulate
+        num_procs: number of processors to use to run parallel tests
+    """
     if metrics is None:
         metrics = ['cf', 'mae', 'roc', 'ap']
     if methods is None:
@@ -60,6 +104,22 @@ def parallel_fairness(dat_gen, n_train, n_test, paras, m, num_procs=4, preproces
 
 
 def cit(dat_gen, n, paras, preprocess='m', b=99):
+    """
+    Conditional independence test for one dataset
+
+    Args:
+        dat_gen: data generation function
+        n: sample size
+        paras: combinations of parameters passed to the data generation 
+            function
+        preprocess: string representation of the preprocess method, 'm' stands 
+            for marginal distribution mapping, 'o' stands for orthogonaliztion
+        b: number of boostrap smaples to use for the conditional independence 
+            test
+
+    Returns:
+        p_vals: a list of p-values for each combination of the parameters
+    """
     np.random.seed(None)
     p_vals = np.zeros(paras.shape[0])
     for i, para in enumerate(paras):
@@ -70,6 +130,14 @@ def cit(dat_gen, n, paras, preprocess='m', b=99):
 
 
 def parallel_cit(dat_gen, n, paras, m=1000, num_procs=4, preprocess='m', b=99):
+    """
+    A wrapper of the conditional independence test that run multiple tests in
+    parallel
+
+    Args:
+        m: number of datasets to simulate
+        num_procs: number of processors to use to run parallel tests
+    """
     pool = Pool(num_procs)
     _cit_ = partial(cit, dat_gen, n, paras, preprocess, b)
     experiments = [pool.apply_async(_cit_) for _ in range(m)]
